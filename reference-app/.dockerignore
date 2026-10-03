@@ -1,0 +1,10 @@
+.env
+.env.*
+**/*.pem
+**/*.key
+node_modules/
+dist/
+coverage/
+test/
+README.md
+**/.DS_Store

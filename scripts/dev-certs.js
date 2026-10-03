@@ -19,7 +19,7 @@ execFileSync(
     '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1',
     '-keyout', keyPath, '-out', certPath,
     '-subj', '/CN=localhost',
-    '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1',
+    '-addext', 'subjectAltName=DNS:localhost,DNS:middleware,IP:127.0.0.1',
   ],
   { stdio: 'pipe' },
 );

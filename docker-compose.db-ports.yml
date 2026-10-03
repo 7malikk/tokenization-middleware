@@ -1,0 +1,19 @@
+# Optional, for debugging and for running the test suites against the
+# containerized databases. Not used by default.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.db-ports.yml up -d vault-db reference-db
+#
+# vault-net is internal (no published ports), so vault-db also joins a
+# separate debug network here. The reference app is never on it.
+
+services:
+  vault-db:
+    networks: [vault-net, db-debug-net]
+    ports:
+      - "127.0.0.1:${VAULT_DB_PORT:-5433}:5432"
+  reference-db:
+    ports:
+      - "127.0.0.1:${REFERENCE_DB_PORT:-5434}:5432"
+
+networks:
+  db-debug-net: {}

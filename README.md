@@ -4,11 +4,12 @@ Self-hosted middleware that protects permanent identifiers (BVN as the
 representative case) for Nigerian SMEs. It exposes three operations:
 tokenize, detokenize, and erase. See `CLAUDE.md` for the locked design.
 
-Current state: **increment 4**, key layer and bootstrap. The three endpoints
+Current state: **increment 5**, packaging and reference integration. The three endpoints
 run over TLS behind API keys with per-operation scopes, a rate limit, and an
 append-only audit log. Data keys are wrapped under master keys that live in an
 encrypted key file, unlocked at startup by a key-encryption key (KEK) and held
-only in memory.
+only in memory. It ships as a Docker Compose stack alongside a reference
+application that stores only tokens.
 
 ## Requirements
 
@@ -38,7 +39,7 @@ from `.env`. Variables already set in the environment take precedence over it.
 | `MASTER_KEY_FILE` | Path to the master key file (from `npm run key:init`) |
 | `MASTER_KEK` | The KEK as 64 hex chars. Removed from the process environment once read |
 | `MASTER_KEK_FILE` | Path to a file holding the KEK (for example a Docker secret). Set this or `MASTER_KEK`, never both |
-| `POSTGRES_PORT` | Host port for the Compose postgres service (default 5432) |
+| `VAULT_DB_PORT` | Host port for `vault-db` when using `docker-compose.db-ports.yml` (default 5433) |
 
 ## Database migrations
 
@@ -91,23 +92,15 @@ npm run test:int
 
 ### With Docker
 
-`docker-compose.yml` currently defines only the `postgres` service. The app
-service arrives in increment 5. The tests run on the host against the
-containerized database.
+The test suites run on the host against the Compose databases. Their ports
+are not published by default, so add the debug override:
 
 ```sh
-docker compose up -d postgres
+docker compose -f docker-compose.yml -f docker-compose.db-ports.yml up -d vault-db
 ```
 
-The service publishes on host port `POSTGRES_PORT` (default 5432). If a native
-PostgreSQL already uses 5432, pick another port:
-
-```sh
-POSTGRES_PORT=5433 docker compose up -d postgres
-```
-
-Then point the URLs at the container. The default credentials are
-`vault` / `vault`. Either put these in `.env` or pass them inline:
+`vault-db` is then on `127.0.0.1:5433` (set `VAULT_DB_PORT` to change it),
+with credentials `vault` / `vault`:
 
 ```sh
 DATABASE_URL="postgresql://vault:vault@localhost:5433/vault?schema=vault" \
@@ -117,10 +110,97 @@ npm run test:int
 
 `npm test` needs no database, so it runs the same way in both setups.
 
-To stop the service, run `docker compose down`. Add `-v` to also delete its
-data volume.
+The full deployment has its own end-to-end test, which builds the images and
+runs a clean, isolated stack (separate Compose project, secrets and ports),
+then tears it down:
 
-## Running the app
+```sh
+npm run e2e:docker
+```
+
+## Deploy with Docker
+
+Needs only Docker with Compose v2. No Node.js on the host.
+
+```sh
+git clone <repository> && cd <repository>
+
+docker compose run --rm setup
+docker compose up -d
+```
+
+`setup` builds the images, starts `vault-db`, applies the migrations, then
+creates whatever is missing (it never overwrites an existing file):
+
+| Created | Used as |
+| --- | --- |
+| `secrets/tls-cert.pem`, `secrets/tls-key.pem` | Self-signed certificate for `localhost` and `middleware` |
+| `secrets/master-kek` | The KEK (Compose secret, `MASTER_KEK_FILE`) |
+| `keys/master-keys.json` | The master key file, mounted read-only |
+| `secrets/reference-api-key` | The reference app's credential (all three scopes) |
+
+On Docker Desktop for Mac, if the clone sits in `~/Documents`, `~/Desktop` or
+`~/Downloads`, macOS blocks Docker from mounting `secrets/` and `keys/`
+("operation not permitted"). Grant Docker Desktop access in System Settings,
+Privacy & Security, Files and Folders, or clone somewhere else.
+
+`secrets/` and `keys/` are gitignored and excluded from every image. Back up
+`secrets/master-kek` and `keys/` separately: without both, no token can ever
+be detokenized.
+
+Then:
+
+- the middleware is at `https://localhost:3000` (`MIDDLEWARE_PORT`)
+- the reference app is at `http://localhost:8080` (`REFERENCE_PORT`)
+
+Both publish on `127.0.0.1` only. Set `MIDDLEWARE_BIND` or `REFERENCE_BIND`
+to expose them more widely.
+
+```sh
+curl -s localhost:8080/customers -H 'Content-Type: application/json' \
+  -d '{"fullName":"Ada Obi","bvn":"12345678901"}'
+# {"id":"...","fullName":"Ada Obi","bvnToken":"..."}
+
+curl -s localhost:8080/customers/<id>
+curl -s -X POST localhost:8080/customers/<id>/reveal-bvn
+curl -s -X POST localhost:8080/customers/<id>/erase
+```
+
+Services:
+
+| Service | Networks | Role |
+| --- | --- | --- |
+| `vault-db` | `vault-net` | Vault database |
+| `migrate` | `vault-net` | One-shot `prisma migrate deploy` for the vault |
+| `middleware` | `vault-net`, `app-net` | The tokenization middleware (HTTPS) |
+| `reference-db` | `app-net` | The reference app's database |
+| `reference-migrate` | `app-net` | One-shot migrations for the reference database |
+| `reference-app` | `app-net` | The reference application |
+| `setup` | `vault-net` | One-shot setup (profile `setup`, run on demand) |
+
+`vault-net` is internal (no outside connectivity), and the reference app is
+not on it, so it has no network path to `vault-db`. This relies on the Docker
+Engine isolating bridge networks from each other, which it does on Linux and
+in Docker Desktop. OrbStack does not enforce that isolation: there the
+reference app cannot resolve `vault-db` by name but can still reach it by IP,
+and `npm run e2e:docker` reports that check as failed. The middleware and
+reference app run as a non-root user with a read-only root filesystem and no
+Linux capabilities. Secrets reach containers only as Compose secrets under
+`/run/secrets`; the reference app receives the middleware certificate and its
+API key, never the TLS key or KEK.
+
+Other operations:
+
+```sh
+docker compose logs -f middleware
+docker compose stop middleware && docker compose run --rm setup rotate && docker compose up -d
+docker compose down          # stop; add -v to also delete both databases
+```
+
+For debugging, `docker-compose.db-ports.yml` publishes `vault-db` on
+`127.0.0.1:5433` and `reference-db` on `127.0.0.1:5434`.
+
+## Running the app natively
 
 The server only starts with TLS configured. For local development:
 
@@ -225,6 +305,47 @@ npm run -s cred:revoke -- --id <CREDENTIAL_ID>
   command, so audit rows always point at a real credential.
 - Each command builds the app first, then runs against `DATABASE_URL`.
 
+## Reference application
+
+`reference-app/` is a separate service with its own Prisma schema and its own
+database. Its one table, `customer`, holds `id`, `full_name` and `bvn_token`:
+there is no BVN column. It talks to the middleware over HTTPS, trusting only
+the middleware's certificate (`MIDDLEWARE_CA_PATH` replaces the system CAs),
+and authenticates with its own API key.
+
+| Endpoint | Does |
+| --- | --- |
+| `POST /customers` `{ fullName, bvn }` | Tokenizes the BVN, stores only the token, returns the customer |
+| `GET /customers/:id` | Returns the customer with its token, never the BVN |
+| `POST /customers/:id/reveal-bvn` | Detokenizes and returns `{ bvn }` for this one response (`no-store`) |
+| `POST /customers/:id/erase` | Erases the BVN in the vault; the customer keeps its now-dead token |
+
+After erasure, reveal returns 404. Any middleware failure becomes one fixed
+502. If saving a customer fails after tokenizing, the new token is erased.
+
+### Running the reference app natively
+
+With the middleware running natively (see above):
+
+```sh
+cd reference-app
+npm install
+cp .env.example .env     # DATABASE_URL, MIDDLEWARE_URL, MIDDLEWARE_CA_PATH
+npm run prisma:deploy
+
+# From the middleware directory, issue the app a credential:
+#   npm run -s app:create -- --name reference-app
+#   npm run -s cred:create -- --app <APP_ID> --scopes TOKENIZE,DETOKENIZE,ERASE
+REFERENCE_API_KEY=tkm_... npm run start      # or REFERENCE_API_KEY_FILE=<path>
+```
+
+Its tests run against a local database and a fake HTTPS middleware:
+
+```sh
+npm test            # unit tests
+npm run test:int    # needs PostgreSQL at TEST_DATABASE_URL (name ending in _test)
+```
+
 ## API
 
 All three endpoints are `POST` with a JSON body under `/v1`, so tokens and
@@ -286,6 +407,9 @@ curl -s --cacert certs/dev-cert.pem -H 'Content-Type: application/json' \
 ## Layout
 
 ```
+Dockerfile                middleware image (runtime, migrate and setup targets)
+docker-compose.yml        full stack; docker-compose.db-ports.yml for debugging
+docker/setup.sh           the setup service's script
 prisma/schema.prisma      vault schema (5 tables, 2 enums)
 prisma/migrations/        generated by prisma migrate
 src/app.factory.ts        builds the app: TLS, body limit, JSON parser, logger
@@ -296,7 +420,8 @@ src/audit/                audit service and the exception filter that audits fai
 src/prisma/               the shared Prisma client and its append-only extension
 src/cli/                  app, credential and key commands
 src/vault/                endpoints, validation pipes, and the vault service
-scripts/                  dev:certs helper
+scripts/                  dev:certs helper and the Docker e2e test
+reference-app/            the reference application (own schema, database, tests)
 test/helpers/             syntheticBvn() and the test database guard
 test/integration/         schema, service, CLI, audit log and rotation tests (need PostgreSQL)
 test/http/                HTTP tests (need PostgreSQL and openssl)

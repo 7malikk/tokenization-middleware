@@ -1,0 +1,19 @@
+// Reference application database. Separate from the vault database.
+// It holds tokens only: there is deliberately no BVN column.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Customer {
+  id       String @id @default(uuid()) @db.Uuid
+  fullName String @map("full_name")
+  bvnToken String @unique @map("bvn_token") @db.Char(32)
+
+  @@map("customer")
+}

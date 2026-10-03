@@ -1,0 +1,21 @@
+# Nothing secret or local may enter the build context: no keys, certificates,
+# env files, key files or generated secrets.
+.git
+.gitignore
+.env
+.env.*
+**/*.pem
+**/*.key
+certs/
+keys/
+secrets/
+briefs/
+CLAUDE.md
+node_modules/
+dist/
+coverage/
+test/
+reference-app/
+docker-compose*.yml
+README.md
+**/.DS_Store

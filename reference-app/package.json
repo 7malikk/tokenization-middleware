@@ -1,8 +1,8 @@
 {
-  "name": "tokenization-middleware",
+  "name": "tokenization-reference-app",
   "version": "0.1.0",
   "private": true,
-  "description": "Self-hosted tokenization middleware for permanent identifiers (BVN)",
+  "description": "Reference application: stores only BVN tokens, calls the tokenization middleware",
   "license": "UNLICENSED",
   "engines": {
     "node": ">=22"
@@ -15,15 +15,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "test": "jest",
-    "test:int": "jest -c jest.int.config.js --runInBand",
-    "dev:certs": "node scripts/dev-certs.js",
-    "app:create": "npm run -s build && node dist/cli/main.js app:create",
-    "cred:create": "npm run -s build && node dist/cli/main.js cred:create",
-    "cred:revoke": "npm run -s build && node dist/cli/main.js cred:revoke",
-    "key:generate-kek": "npm run -s build && node dist/cli/main.js key:generate-kek",
-    "key:init": "npm run -s build && node dist/cli/main.js key:init",
-    "key:rotate": "npm run -s build && node dist/cli/main.js key:rotate",
-    "e2e:docker": "node scripts/e2e-docker.js"
+    "test:int": "jest -c jest.int.config.js --runInBand"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.7",
@@ -42,14 +34,14 @@
     "ts-jest": "^29.4.14",
     "typescript": "~5.9.3"
   },
+  "overrides": {
+    "fastify": "^5.12.5"
+  },
   "allowScripts": {
     "@prisma/client@6.19.3": true,
     "@prisma/engines@6.19.3": true,
     "prisma@6.19.3": true,
     "@parcel/watcher": false,
     "unrs-resolver": false
-  },
-  "overrides": {
-    "fastify": "^5.12.5"
   }
 }
