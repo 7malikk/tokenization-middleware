@@ -1,0 +1,105 @@
+// Vault database schema. Table and column names are snake_case via @@map / @map.
+// Migrations are generated only by `prisma migrate`. No hand-written SQL.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Operation {
+  TOKENIZE
+  DETOKENIZE
+  ERASE
+
+  @@map("operation")
+}
+
+enum Outcome {
+  SUCCESS
+  UNAUTHENTICATED
+  FORBIDDEN_SCOPE
+  NOT_FOUND
+  NOT_OWNER
+  ERASED
+  ERROR
+
+  @@map("outcome")
+}
+
+model Application {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  credentials  ApiCredential[]
+  vaultRecords VaultRecord[]
+
+  @@map("application")
+}
+
+model ApiCredential {
+  id        String    @id @default(uuid()) @db.Uuid
+  appId     String    @map("app_id") @db.Uuid
+  // SHA-256 of the API key. The key itself is never stored.
+  keyHash   Bytes     @unique @map("key_hash")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+
+  app       Application       @relation(fields: [appId], references: [id])
+  scopes    CredentialScope[]
+  auditLogs AuditLog[]
+
+  @@index([appId])
+  @@map("api_credential")
+}
+
+model CredentialScope {
+  credentialId String    @map("credential_id") @db.Uuid
+  operation    Operation
+
+  credential ApiCredential @relation(fields: [credentialId], references: [id])
+
+  @@id([credentialId, operation])
+  @@map("credential_scope")
+}
+
+model VaultRecord {
+  // 128-bit random token as 32 hex chars.
+  token            String    @id @db.Char(32)
+  // Owning application. Detokenize and erase match on token AND appId.
+  appId            String    @map("app_id") @db.Uuid
+  dataType         String    @map("data_type")
+  ciphertext       Bytes
+  iv               Bytes
+  authTag          Bytes     @map("auth_tag")
+  // AES-KW wrapped data key (40 bytes). Null once the record is erased.
+  wrappedDataKey   Bytes?    @map("wrapped_data_key")
+  masterKeyVersion Int       @default(1) @map("master_key_version") @db.SmallInt
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  erasedAt         DateTime? @map("erased_at") @db.Timestamptz(6)
+
+  app Application @relation(fields: [appId], references: [id])
+
+  @@index([appId])
+  @@map("vault_record")
+}
+
+// Append-only. Updates and deletes are blocked by a Prisma client extension.
+model AuditLog {
+  id           BigInt    @id @default(autoincrement())
+  credentialId String?   @map("credential_id") @db.Uuid
+  operation    Operation
+  // Token exactly as the client sent it. Deliberately not a foreign key.
+  token        String?
+  outcome      Outcome
+  occurredAt   DateTime  @default(now()) @map("occurred_at") @db.Timestamptz(6)
+
+  credential ApiCredential? @relation(fields: [credentialId], references: [id])
+
+  @@index([credentialId])
+  @@map("audit_log")
+}
