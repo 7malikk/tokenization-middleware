@@ -50,7 +50,9 @@ The integration suite starts with `prisma migrate reset`, which **deletes
 everything** in the test database and then applies every migration from
 scratch. Prisma creates the database if it does not exist. The suite refuses
 to start unless the database name in `TEST_DATABASE_URL` ends in `_test` and
-the URL differs from `DATABASE_URL`. Never point it at a database you care
+the URL differs from `DATABASE_URL`. The check reads the database name from the
+URL path and ignores the `?schema=` parameter, so
+`.../vault?schema=vault_test` is refused. Never point it at a database you care
 about.
 
 ### Natively
@@ -59,8 +61,8 @@ With a local PostgreSQL running:
 
 ```sh
 # .env
-DATABASE_URL="postgresql://<user>@localhost:5432/vault?schema=public"
-TEST_DATABASE_URL="postgresql://<user>@localhost:5432/vault_test?schema=public"
+DATABASE_URL="postgresql://<user>@localhost:5432/vault?schema=vault"
+TEST_DATABASE_URL="postgresql://<user>@localhost:5432/vault_test?schema=vault_test"
 ```
 
 ```sh
@@ -89,8 +91,8 @@ Then point the URLs at the container. The default credentials are
 `vault` / `vault`. Either put these in `.env` or pass them inline:
 
 ```sh
-DATABASE_URL="postgresql://vault:vault@localhost:5433/vault?schema=public" \
-TEST_DATABASE_URL="postgresql://vault:vault@localhost:5433/vault_test?schema=public" \
+DATABASE_URL="postgresql://vault:vault@localhost:5433/vault?schema=vault" \
+TEST_DATABASE_URL="postgresql://vault:vault@localhost:5433/vault_test?schema=vault_test" \
 npm run test:int
 ```
 
