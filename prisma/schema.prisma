@@ -98,7 +98,9 @@ model AuditLog {
   outcome      Outcome
   occurredAt   DateTime  @default(now()) @map("occurred_at") @db.Timestamptz(6)
 
-  credential ApiCredential? @relation(fields: [credentialId], references: [id])
+  // Restrict, not the SetNull/Cascade default: PostgreSQL must never rewrite
+  // audit rows behind the append-only extension. Credentials are revoked, not deleted.
+  credential ApiCredential? @relation(fields: [credentialId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([credentialId])
   @@map("audit_log")

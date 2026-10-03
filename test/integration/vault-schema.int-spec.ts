@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { decrypt, encrypt, generateDataKey, generateToken, unwrapKey, wrapKey, zeroize } from '../../src/crypto/crypto';
 import { syntheticBvn } from '../helpers/synthetic-bvn';
 
@@ -119,6 +120,55 @@ describe('vault schema (PostgreSQL)', () => {
       expect(Buffer.from(row!.ciphertext).equals(sent.ciphertext)).toBe(true);
       expect(Buffer.from(row!.iv).equals(sent.iv)).toBe(true);
       expect(Buffer.from(row!.authTag).equals(sent.authTag)).toBe(true);
+    });
+  });
+
+  describe('audit log foreign key', () => {
+    async function credentialWithAuditRow() {
+      const app = await db.application.create({ data: { name: `int-test-${generateToken()}` } });
+      // No scopes, so the audit row is the only thing referencing the credential.
+      const credential = await db.apiCredential.create({
+        data: { appId: app.id, keyHash: createHash('sha256').update(generateToken()).digest() },
+      });
+      const audit = await db.auditLog.create({
+        data: {
+          credentialId: credential.id,
+          operation: 'DETOKENIZE',
+          token: generateToken(),
+          outcome: 'SUCCESS',
+        },
+      });
+      return { credential, audit };
+    }
+
+    async function expectRestrictViolation(action: Promise<unknown>) {
+      const error = await action.then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+      const known = error as Prisma.PrismaClientKnownRequestError;
+      expect(known.code).toBe('P2003');
+      expect(known.meta?.constraint).toBe('audit_log_credential_id_fkey');
+    }
+
+    it('blocks deleting a credential that has audit rows, leaving the row unchanged', async () => {
+      const { credential, audit } = await credentialWithAuditRow();
+
+      await expectRestrictViolation(db.apiCredential.delete({ where: { id: credential.id } }));
+
+      expect(await db.apiCredential.findUnique({ where: { id: credential.id } })).not.toBeNull();
+      expect(await db.auditLog.findUniqueOrThrow({ where: { id: audit.id } })).toEqual(audit);
+    });
+
+    it('blocks changing the id of a credential that has audit rows', async () => {
+      const { credential, audit } = await credentialWithAuditRow();
+
+      await expectRestrictViolation(
+        db.apiCredential.update({ where: { id: credential.id }, data: { id: randomUUID() } }),
+      );
+
+      expect(await db.auditLog.findUniqueOrThrow({ where: { id: audit.id } })).toEqual(audit);
     });
   });
 });
