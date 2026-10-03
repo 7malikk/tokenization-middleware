@@ -1,9 +1,10 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
-import { DevAppGuard } from './dev-app.guard';
+import { ApiKeyGuard } from './api-key.guard';
+import { CredentialsService } from './credentials.service';
+import { RateLimiter } from './rate-limiter';
 
 @Module({
-  // TEMPORARY: increment 3 swaps DevAppGuard for the API key guard.
-  providers: [{ provide: APP_GUARD, useClass: DevAppGuard }],
+  providers: [CredentialsService, RateLimiter, { provide: APP_GUARD, useClass: ApiKeyGuard }],
 })
 export class AuthModule {}

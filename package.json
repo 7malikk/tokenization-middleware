@@ -17,7 +17,9 @@
     "test": "jest",
     "test:int": "jest -c jest.int.config.js --runInBand",
     "dev:certs": "node scripts/dev-certs.js",
-    "dev:app": "node scripts/dev-app.js"
+    "app:create": "npm run -s build && node dist/cli/main.js app:create",
+    "cred:create": "npm run -s build && node dist/cli/main.js cred:create",
+    "cred:revoke": "npm run -s build && node dist/cli/main.js cred:revoke"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.7",

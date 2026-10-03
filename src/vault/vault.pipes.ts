@@ -10,6 +10,11 @@ export const DATA_TYPE_FORMATS: Readonly<Record<string, RegExp>> = {
 
 const TOKEN_FORMAT = /^[0-9a-f]{32}$/;
 
+/** True for 32 lowercase hex chars, the only shape a token can have. */
+export function isWellFormedToken(token: unknown): token is string {
+  return typeof token === 'string' && TOKEN_FORMAT.test(token);
+}
+
 export interface TokenizeBody {
   dataType: string;
   value: string;
@@ -75,7 +80,7 @@ export class TokenizeBodyPipe implements PipeTransform<unknown, TokenizeBody> {
 export class TokenBodyPipe implements PipeTransform<unknown, TokenBody> {
   transform(body: unknown): TokenBody {
     const { token } = expectObjectWithKeys(body, ['token']);
-    if (typeof token !== 'string' || !TOKEN_FORMAT.test(token)) {
+    if (!isWellFormedToken(token)) {
       throw new BadRequestException('token must be 32 lowercase hex characters');
     }
     return { token };

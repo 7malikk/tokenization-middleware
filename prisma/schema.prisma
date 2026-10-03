@@ -26,6 +26,8 @@ enum Outcome {
   NOT_OWNER
   ERASED
   ERROR
+  INVALID_REQUEST
+  RATE_LIMITED
 
   @@map("outcome")
 }

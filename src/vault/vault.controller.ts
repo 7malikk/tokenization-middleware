@@ -1,5 +1,6 @@
 import { Body, Controller, Header, HttpCode, NotFoundException, Post } from '@nestjs/common';
-import { CallerAppId } from '../auth/caller';
+import { AuditTrail, Caller, CurrentAudit, CurrentCaller } from '../auth/request-context';
+import { RequiresOperation } from '../auth/requires-operation.decorator';
 import { TokenBody, TokenBodyPipe, TokenizeBody, TokenizeBodyPipe } from './vault.pipes';
 import { VaultService } from './vault.service';
 
@@ -17,23 +18,27 @@ export class VaultController {
   constructor(private readonly vault: VaultService) {}
 
   @Post('tokenize')
+  @RequiresOperation('TOKENIZE')
   @HttpCode(201)
   @Header('Cache-Control', 'no-store')
   async tokenize(
-    @CallerAppId() appId: string,
+    @CurrentCaller() caller: Caller,
+    @CurrentAudit() trail: AuditTrail,
     @Body(TokenizeBodyPipe) body: TokenizeBody,
   ): Promise<{ token: string }> {
-    return { token: await this.vault.tokenize(appId, body.dataType, body.value) };
+    return { token: await this.vault.tokenize(caller, trail, body.dataType, body.value) };
   }
 
   @Post('detokenize')
+  @RequiresOperation('DETOKENIZE')
   @HttpCode(200)
   @Header('Cache-Control', 'no-store')
   async detokenize(
-    @CallerAppId() appId: string,
+    @CurrentCaller() caller: Caller,
+    @CurrentAudit() trail: AuditTrail,
     @Body(TokenBodyPipe) body: TokenBody,
   ): Promise<{ dataType: string; value: string }> {
-    const result = await this.vault.detokenize(appId, body.token);
+    const result = await this.vault.detokenize(caller, trail, body.token);
     if (!result.found) {
       throw tokenNotFound();
     }
@@ -41,13 +46,15 @@ export class VaultController {
   }
 
   @Post('erase')
+  @RequiresOperation('ERASE')
   @HttpCode(200)
   @Header('Cache-Control', 'no-store')
   async erase(
-    @CallerAppId() appId: string,
+    @CurrentCaller() caller: Caller,
+    @CurrentAudit() trail: AuditTrail,
     @Body(TokenBodyPipe) body: TokenBody,
   ): Promise<{ erased: true }> {
-    const result = await this.vault.erase(appId, body.token);
+    const result = await this.vault.erase(caller, trail, body.token);
     if (!result.found) {
       throw tokenNotFound();
     }

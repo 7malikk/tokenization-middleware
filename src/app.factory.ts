@@ -3,6 +3,7 @@ import { LoggerService } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { AppModule } from './app.module';
+import { Clock } from './auth/clock';
 import { Env } from './config/env';
 
 export const BODY_LIMIT_BYTES = 4096;
@@ -12,6 +13,8 @@ export interface CreateAppOptions {
   logStream?: NodeJS.WritableStream;
   /** Logger for Nest's own messages. Defaults to Nest's console logger. */
   nestLogger?: LoggerService;
+  /** Time source for rate limiting. Defaults to the system clock. */
+  clock?: Clock;
 }
 
 /** Build the app from an explicit environment. Throws instead of exiting on bad config. */
@@ -35,7 +38,7 @@ export async function createApp(env: Env, options: CreateAppOptions = {}): Promi
   });
   acceptJsonOnly(adapter);
 
-  return NestFactory.create<NestFastifyApplication>(AppModule.forRoot(env), adapter, {
+  return NestFactory.create<NestFastifyApplication>(AppModule.forRoot(env, { clock: options.clock }), adapter, {
     abortOnError: false,
     bodyParser: false,
     ...(options.nestLogger ? { logger: options.nestLogger } : {}),
