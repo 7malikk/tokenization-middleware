@@ -3,7 +3,8 @@
 # Tokenization middleware. Targets:
 #   runtime  the server: production dependencies and the built app only
 #   migrate  one-shot `prisma migrate deploy` (keeps the Prisma CLI out of runtime)
-#   setup    one-shot dev setup: certificates, KEK, key file, reference credential
+#   setup    one-shot dev setup: certificates, KEK, key file, database passwords,
+#            reference credential, key rotation
 
 FROM node:22-slim AS base
 # Prisma's query engine needs OpenSSL.
@@ -38,7 +39,8 @@ CMD ["node", "dist/main.js"]
 
 FROM build AS migrate
 USER node
-CMD ["npx", "prisma", "migrate", "deploy"]
+# Builds DATABASE_URL from the password secret, then runs the migration.
+CMD ["node", "dist/config/database-url.js", "npx", "prisma", "migrate", "deploy"]
 
 FROM runtime AS setup
 USER root

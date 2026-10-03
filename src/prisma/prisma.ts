@@ -1,4 +1,5 @@
 import { Prisma, PrismaClient } from '@prisma/client';
+import { resolveDatabaseUrl } from '../config/database-url';
 
 /** Thrown for any attempt to change or remove an audit row. */
 export class AuditLogAppendOnlyError extends Error {
@@ -68,12 +69,12 @@ export const appendOnlyAuditLog = Prisma.defineExtension({
   },
 });
 
-/** The one shared client: Prisma plus the append-only audit log extension. */
-export function createPrismaClient(databaseUrl: string | undefined) {
-  if (!databaseUrl) {
-    throw new Error('DATABASE_URL is not set');
-  }
-  return new PrismaClient({ datasourceUrl: databaseUrl }).$extends(appendOnlyAuditLog);
+/**
+ * The one shared client: Prisma plus the append-only audit log extension.
+ * The URL comes from DATABASE_URL, or is built from DATABASE_PASSWORD_FILE.
+ */
+export function createPrismaClient(env: Readonly<Record<string, string | undefined>>) {
+  return new PrismaClient({ datasourceUrl: resolveDatabaseUrl(env) }).$extends(appendOnlyAuditLog);
 }
 
 export type PrismaDb = ReturnType<typeof createPrismaClient>;

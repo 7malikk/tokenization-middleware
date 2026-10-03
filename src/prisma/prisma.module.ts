@@ -21,7 +21,7 @@ class PrismaLifecycle implements OnModuleDestroy {
       provide: PRISMA,
       inject: [ENV],
       useFactory: async (env: Env): Promise<PrismaDb> => {
-        const db = createPrismaClient(env.DATABASE_URL);
+        const db = createPrismaClient(env);
         await db.$connect();
         return db;
       },

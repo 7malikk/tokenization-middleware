@@ -26,7 +26,7 @@ describe('admin CLI and append-only audit log (PostgreSQL)', () => {
   let db: PrismaDb;
 
   beforeAll(() => {
-    db = createPrismaClient(process.env.DATABASE_URL);
+    db = createPrismaClient({ DATABASE_URL: process.env.DATABASE_URL });
   });
 
   afterAll(async () => {

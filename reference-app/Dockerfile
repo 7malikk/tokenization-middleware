@@ -36,4 +36,5 @@ CMD ["node", "dist/main.js"]
 
 FROM build AS migrate
 USER node
-CMD ["npx", "prisma", "migrate", "deploy"]
+# Builds DATABASE_URL from the password secret, then runs the migration.
+CMD ["node", "dist/config/database-url.js", "npx", "prisma", "migrate", "deploy"]

@@ -100,8 +100,11 @@ async function main() {
   compose(['--profile', 'setup', 'build'], { quiet: false });
 
   console.log('e2e: setup');
-  const setup = compose(['run', '--rm', 'setup']);
-  check('setup completes', /Setup complete/.test(setup.out));
+  const setupSecrets = compose(['run', '--rm', 'setup']);
+  check('setup step 1 (secrets) completes', /Step 1 complete/.test(setupSecrets.out));
+  const setupVault = compose(['run', '--rm', 'setup-vault']);
+  check('setup step 2 (reference credential) completes', /Setup complete/.test(setupVault.out));
+  const setup = { out: setupSecrets.out + setupVault.out };
 
   console.log('e2e: starting the stack');
   compose(['up', '-d']);
@@ -153,6 +156,24 @@ async function main() {
   check('control: reference-app can reach reference-db', canConnect('reference-app', 'reference-db', 5432).ok);
   check('control: reference-app can reach middleware', canConnect('reference-app', 'middleware', 3000).ok);
 
+  // Generated database passwords: the right one works, the old default is refused.
+  const dbProbe = (urlExpr) =>
+    "const {PrismaClient}=require('@prisma/client');" +
+    "const {resolveDatabaseUrl}=require('./dist/config/database-url');" +
+    `const db=new PrismaClient({datasourceUrl:${urlExpr}});` +
+    "db.$connect().then(()=>{console.log('accepted');process.exit(0)}," +
+    "e=>{console.log(e.errorCode||e.code||'error');process.exit(1)})";
+  for (const [service, db, oldDefault] of [
+    ['middleware', 'vault-db', 'postgresql://vault:vault@vault-db:5432/vault'],
+    ['reference-app', 'reference-db', 'postgresql://reference:reference@reference-db:5432/reference'],
+  ]) {
+    const generated = compose(['exec', '-T', service, 'node', '-e', dbProbe('resolveDatabaseUrl(process.env)')], { allowFail: true });
+    check(`control: ${db} accepts the generated password`, generated.code === 0, generated.out.trim().split('\n').at(-1));
+    const old = compose(['exec', '-T', service, 'node', '-e', dbProbe(JSON.stringify(oldDefault))], { allowFail: true });
+    const how = old.out.trim().split('\n').at(-1);
+    check(`${db} rejects the old default password`, old.code !== 0 && how === 'P1000', how);
+  }
+
   // Non-root.
   const uid = compose(['exec', '-T', 'middleware', 'id', '-u']).out.trim();
   check('middleware runs as non-root', uid !== '' && uid !== '0', `uid ${uid}`);
@@ -184,6 +205,18 @@ async function main() {
   check('no synthetic BVN in any container log', !logs.includes(bvn));
   check('secrets were read back for the check', /^[0-9a-f]{64}$/.test(secrets[0]) && /^tkm_/.test(secrets[1]));
   check('no KEK or API key in any container log', secrets.every((s) => s.length > 0 && !logs.includes(s)));
+
+  const passwords = [
+    compose(['exec', '-T', 'middleware', 'cat', '/run/secrets/vault_db_password']).out.trim(),
+    compose(['exec', '-T', 'reference-app', 'cat', '/run/secrets/reference_db_password']).out.trim(),
+  ];
+  check('database passwords were generated', passwords.every((p) => /^[A-Za-z0-9_-]{43}$/.test(p)) && passwords[0] !== passwords[1]);
+  check('no database password in any container log', passwords.every((p) => !logs.includes(p)));
+  const config = compose(['config']).out;
+  check('no database password in the resolved Compose config', passwords.every((p) => !config.includes(p)));
+  const ids = compose(['ps', '-a', '-q']).out.trim().split(/\s+/).filter(Boolean);
+  const containerEnv = execFileSync('docker', ['inspect', '--format', '{{json .Config.Env}}', ...ids], { encoding: 'utf8' });
+  check('no database password in any container environment', passwords.every((p) => !containerEnv.includes(p)));
 
   for (const image of ['tokenization-middleware:latest', 'tokenization-reference-app:latest']) {
     const size = execFileSync('docker', ['image', 'ls', image, '--format', '{{.Size}}'], { encoding: 'utf8' }).trim();

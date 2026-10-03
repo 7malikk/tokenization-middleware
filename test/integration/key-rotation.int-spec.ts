@@ -111,7 +111,7 @@ describe('master key rotation (PostgreSQL)', () => {
 
   beforeAll(async () => {
     resetTestDatabase();
-    db = createPrismaClient(process.env.DATABASE_URL);
+    db = createPrismaClient({ DATABASE_URL: process.env.DATABASE_URL });
     const app = await createApplication(db, 'rotation');
     const { id } = await createCredential(db, app.id, ['TOKENIZE', 'DETOKENIZE', 'ERASE']);
     caller = { appId: app.id, credentialId: id };

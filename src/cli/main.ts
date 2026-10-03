@@ -130,7 +130,7 @@ if (require.main === module) {
   let db: PrismaDb | undefined;
   const ctx: CliContext = {
     env: process.env,
-    db: () => (db ??= createPrismaClient(process.env.DATABASE_URL)),
+    db: () => (db ??= createPrismaClient(process.env)),
     io: {
       out: (line) => process.stdout.write(`${line}\n`),
       err: (line) => process.stderr.write(`${line}\n`),

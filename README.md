@@ -29,7 +29,8 @@ from `.env`. Variables already set in the environment take precedence over it.
 
 | Variable | Purpose |
 | --- | --- |
-| `DATABASE_URL` | Vault database used by the app and by `prisma migrate` |
+| `DATABASE_URL` | Vault database used by the app and by `prisma migrate` (native runs) |
+| `DATABASE_PASSWORD_FILE` | Instead of `DATABASE_URL` (Docker): file holding the database password. Needs `DATABASE_HOST`, `DATABASE_NAME`, `DATABASE_USER`; optional `DATABASE_PORT` (5432), `DATABASE_SCHEMA` |
 | `TEST_DATABASE_URL` | Database the integration suite resets. Must differ from `DATABASE_URL` and its name must end in `_test` |
 | `PORT` | HTTPS port for `npm run start` (default 3000) |
 | `TLS_CERT_PATH`, `TLS_KEY_PATH` | TLS certificate and key (PEM). Required: the server refuses to start without them |
@@ -99,12 +100,14 @@ are not published by default, so add the debug override:
 docker compose -f docker-compose.yml -f docker-compose.db-ports.yml up -d vault-db
 ```
 
-`vault-db` is then on `127.0.0.1:5433` (set `VAULT_DB_PORT` to change it),
-with credentials `vault` / `vault`:
+`vault-db` is then on `127.0.0.1:5433` (set `VAULT_DB_PORT` to change it).
+Its user is `vault` and its password is the one setup generated in
+`secrets/vault-db-password` (run `docker compose run --rm setup` first):
 
 ```sh
-DATABASE_URL="postgresql://vault:vault@localhost:5433/vault?schema=vault" \
-TEST_DATABASE_URL="postgresql://vault:vault@localhost:5433/vault_test?schema=vault_test" \
+PW=$(cat secrets/vault-db-password)
+DATABASE_URL="postgresql://vault:$PW@localhost:5433/vault?schema=vault" \
+TEST_DATABASE_URL="postgresql://vault:$PW@localhost:5433/vault_test?schema=vault_test" \
 npm run test:int
 ```
 
@@ -125,19 +128,35 @@ Needs only Docker with Compose v2. No Node.js on the host.
 ```sh
 git clone <repository> && cd <repository>
 
-docker compose run --rm setup
+docker compose run --rm setup          # 1. secrets
+docker compose run --rm setup-vault    # 2. the reference app's credential
 docker compose up -d
 ```
 
-`setup` builds the images, starts `vault-db`, applies the migrations, then
-creates whatever is missing (it never overwrites an existing file):
+Setup creates whatever is missing and never overwrites an existing file.
+Step 1 needs no database; step 2 starts `vault-db`, applies the migrations,
+then registers the reference app.
 
-| Created | Used as |
-| --- | --- |
-| `secrets/tls-cert.pem`, `secrets/tls-key.pem` | Self-signed certificate for `localhost` and `middleware` |
-| `secrets/master-kek` | The KEK (Compose secret, `MASTER_KEK_FILE`) |
-| `keys/master-keys.json` | The master key file, mounted read-only |
-| `secrets/reference-api-key` | The reference app's credential (all three scopes) |
+| Created | Step | Used as |
+| --- | --- | --- |
+| `secrets/tls-cert.pem`, `secrets/tls-key.pem` | 1 | Self-signed certificate for `localhost` and `middleware` |
+| `secrets/master-kek` | 1 | The KEK (Compose secret, `MASTER_KEK_FILE`) |
+| `keys/master-keys.json` | 1 | The master key file, mounted read-only |
+| `secrets/vault-db-password` | 1 | Random password for `vault-db` |
+| `secrets/reference-db-password` | 1 | Random password for `reference-db` |
+| `secrets/reference-api-key` | 2 | The reference app's credential (all three scopes) |
+
+Each database reads its password with `POSTGRES_PASSWORD_FILE`. The services
+that connect to it get the host, name and user as plain settings and the
+password only as a Compose secret (`DATABASE_PASSWORD_FILE`); they build the
+connection URL in memory at startup. No password appears in the Compose files,
+env files, images or logs. Natively, `DATABASE_URL` from `.env` is used
+unchanged.
+
+A database takes its password when its volume is first initialised. Keep
+`secrets/*-db-password` with the data: if you regenerate a password for an
+existing volume, that database will refuse it. To start over, run
+`docker compose down -v` (this deletes both databases) and set up again.
 
 On Docker Desktop for Mac, if the clone sits in `~/Documents`, `~/Desktop` or
 `~/Downloads`, macOS blocks Docker from mounting `secrets/` and `keys/`
@@ -176,7 +195,8 @@ Services:
 | `reference-db` | `app-net` | The reference app's database |
 | `reference-migrate` | `app-net` | One-shot migrations for the reference database |
 | `reference-app` | `app-net` | The reference application |
-| `setup` | `vault-net` | One-shot setup (profile `setup`, run on demand) |
+| `setup` | none | Step 1: writes the secret files (profile `setup`, run on demand) |
+| `setup-vault` | `vault-net` | Step 2 and key rotation (profile `setup`, run on demand) |
 
 `vault-net` is internal (no outside connectivity), and the reference app is
 not on it, so it has no network path to `vault-db`. This relies on the Docker
@@ -193,7 +213,7 @@ Other operations:
 
 ```sh
 docker compose logs -f middleware
-docker compose stop middleware && docker compose run --rm setup rotate && docker compose up -d
+docker compose stop middleware && docker compose run --rm setup-vault rotate && docker compose up -d
 docker compose down          # stop; add -v to also delete both databases
 ```
 
