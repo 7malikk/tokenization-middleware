@@ -10,10 +10,6 @@ export const ENV = Symbol('ENV');
  */
 export type Env = Readonly<Record<string, string | undefined>>;
 
-export function isProduction(env: Env): boolean {
-  return env.NODE_ENV === 'production';
-}
-
 @Global()
 @Module({})
 export class EnvModule {

@@ -36,7 +36,7 @@ describe('admin CLI and append-only audit log (PostgreSQL)', () => {
   async function cli(...argv: string[]) {
     const out: string[] = [];
     const err: string[] = [];
-    const code = await runCli(argv, db, { out: (l) => out.push(l), err: (l) => err.push(l) });
+    const code = await runCli(argv, { env: {}, db: () => db, io: { out: (l) => out.push(l), err: (l) => err.push(l) } });
     const values = Object.fromEntries(out.map((line) => line.split('=', 2) as [string, string]));
     return { code, out, err, values };
   }

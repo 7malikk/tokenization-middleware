@@ -12,7 +12,14 @@ describe('admin CLI', () => {
   });
 
   it('has exactly create and revoke commands, and no delete', () => {
-    expect(Object.keys(COMMANDS).sort()).toEqual(['app:create', 'cred:create', 'cred:revoke']);
+    expect(Object.keys(COMMANDS).sort()).toEqual([
+      'app:create',
+      'cred:create',
+      'cred:revoke',
+      'key:generate-kek',
+      'key:init',
+      'key:rotate',
+    ]);
     const scripts = Object.entries(require('../../package.json').scripts as Record<string, string>);
     expect(scripts.filter(([name, cmd]) => /delete|remove|drop|purge/i.test(name + cmd))).toEqual([]);
   });

@@ -1,22 +1,10 @@
-import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { decrypt, encrypt, generateDataKey, generateToken, unwrapKey, wrapKey, zeroize } from '../../src/crypto/crypto';
+import { prisma, resetTestDatabase } from '../helpers/prisma-cli';
 import { syntheticBvn } from '../helpers/synthetic-bvn';
 
 // Tests in this file run in order: the first one builds the schema the others use.
-
-const ROOT = resolve(__dirname, '../..');
-const PRISMA_BIN = resolve(ROOT, 'node_modules/.bin/prisma');
-
-function prisma(...args: string[]): void {
-  execFileSync(PRISMA_BIN, args, {
-    cwd: ROOT,
-    env: process.env,
-    stdio: 'pipe',
-  });
-}
 
 describe('vault schema (PostgreSQL)', () => {
   let db: PrismaClient;
@@ -32,7 +20,7 @@ describe('vault schema (PostgreSQL)', () => {
   it('applies all migrations to an empty database', async () => {
     // Drops everything in the test database (creating it if needed), then
     // applies every migration in prisma/migrations from scratch.
-    prisma('migrate', 'reset', '--force', '--skip-seed', '--skip-generate');
+    resetTestDatabase();
 
     // Exit code 0 means no pending or failed migrations.
     prisma('migrate', 'status');

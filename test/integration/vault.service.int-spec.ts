@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import { AuditModule } from '../../src/audit/audit.module';
 import { AuditTrail, Caller } from '../../src/auth/request-context';
@@ -9,6 +9,7 @@ import { PRISMA, PrismaModule } from '../../src/prisma/prisma.module';
 import { VaultModule } from '../../src/vault/vault.module';
 import { VaultService } from '../../src/vault/vault.service';
 import { syntheticBvn } from '../helpers/synthetic-bvn';
+import { TestKeys } from '../helpers/test-keys';
 
 describe('VaultService (PostgreSQL)', () => {
   let vault: VaultService;
@@ -16,6 +17,7 @@ describe('VaultService (PostgreSQL)', () => {
   let close: () => Promise<void>;
   let callerA: Caller;
   let callerB: Caller;
+  const keys = new TestKeys();
 
   const trail = (caller: Caller, operation: AuditTrail['operation'], token: string | null = null): AuditTrail => ({
     operation,
@@ -33,10 +35,7 @@ describe('VaultService (PostgreSQL)', () => {
   }
 
   beforeAll(async () => {
-    const env = {
-      DATABASE_URL: process.env.DATABASE_URL,
-      MASTER_KEY_DEV: randomBytes(32).toString('hex'),
-    };
+    const env = { DATABASE_URL: process.env.DATABASE_URL, ...keys.env() };
     const moduleRef = await Test.createTestingModule({
       imports: [EnvModule.forRoot(env), PrismaModule, AuditModule, VaultModule],
     }).compile();
@@ -51,6 +50,7 @@ describe('VaultService (PostgreSQL)', () => {
 
   afterAll(async () => {
     await close();
+    keys.cleanup();
   });
 
   it("owner check: app B cannot detokenize or erase app A's token, and the record is untouched", async () => {

@@ -1,5 +1,4 @@
 import { execFileSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
@@ -19,6 +18,7 @@ import { PrismaDb } from '../../src/prisma/prisma';
 import { PRISMA } from '../../src/prisma/prisma.module';
 import { syntheticBvn } from '../helpers/synthetic-bvn';
 import { TestClock } from '../helpers/test-clock';
+import { TestKeys } from '../helpers/test-keys';
 
 // Every synthetic BVN and API key this file uses, checked against all log
 // output and every audit row at the end.
@@ -64,6 +64,7 @@ describe('HTTP interface with access control and audit (PostgreSQL)', () => {
   let alice: Credential; // all scopes, app A
   let bob: Credential; // all scopes, app B
   const restoreStdio: (() => void)[] = [];
+  const keys = new TestKeys();
 
   async function newCredential(scopes: Operation[], appId?: string): Promise<Credential> {
     const owner = appId ?? (await createApplication(db, `http-${generateToken()}`)).id;
@@ -108,9 +109,9 @@ describe('HTTP interface with access control and audit (PostgreSQL)', () => {
     return res.json().token;
   }
 
-  async function startApp(extraEnv: Record<string, string> = {}, clock?: TestClock) {
+  async function startApp(extraEnv: Record<string, string> = {}, clock?: TestClock, baseEnv = env) {
     const instance = await createApp(
-      { ...env, ...extraEnv },
+      { ...baseEnv, ...extraEnv },
       { logStream: captureStream, nestLogger: captureNestLogger, clock },
     );
     await instance.init();
@@ -132,12 +133,11 @@ describe('HTTP interface with access control and audit (PostgreSQL)', () => {
     execFileSync(process.execPath, [join(ROOT, 'scripts/dev-certs.js'), certDir], { stdio: 'pipe' });
 
     env = {
-      NODE_ENV: 'test',
       LOG_LEVEL: 'info',
       DATABASE_URL: process.env.DATABASE_URL as string,
       TLS_CERT_PATH: join(certDir, 'dev-cert.pem'),
       TLS_KEY_PATH: join(certDir, 'dev-key.pem'),
-      MASTER_KEY_DEV: randomBytes(32).toString('hex'),
+      ...keys.env('file'),
     };
     app = await startApp();
     db = app.get(PRISMA);
@@ -149,6 +149,7 @@ describe('HTTP interface with access control and audit (PostgreSQL)', () => {
   afterAll(async () => {
     await app?.close();
     rmSync(certDir, { recursive: true, force: true });
+    keys.cleanup();
     restoreStdio.forEach((restore) => restore());
   });
 
@@ -505,10 +506,34 @@ describe('HTTP interface with access control and audit (PostgreSQL)', () => {
       await expect(createApp(noTls, { nestLogger: captureNestLogger })).rejects.toThrow('TLS is required');
     });
 
-    it('refuses the temporary DevKeyProvider under NODE_ENV=production', async () => {
-      await expect(createApp({ ...env, NODE_ENV: 'production' }, { nestLogger: captureNestLogger })).rejects.toThrow(
-        'DevKeyProvider must not run when NODE_ENV=production',
-      );
+    it('refuses to start when the key layer cannot unlock, without leaking key material', async () => {
+      const { MASTER_KEK_FILE: _f, ...noKek } = env;
+      const wrongKek = '0'.repeat(64);
+      for (const [bad, message] of [
+        [noKek, 'no KEK'],
+        [{ ...noKek, MASTER_KEK: wrongKek }, 'failed to unwrap'],
+        [{ ...env, MASTER_KEK: keys.kekHex }, 'only one of'],
+        [{ ...env, MASTER_KEY_FILE: `${keys.keyFile}.missing` }, 'missing or unreadable'],
+      ] as const) {
+        const error = await createApp(bad, { nestLogger: captureNestLogger }).catch((e: Error) => e);
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain(message);
+        expect(keys.secrets().filter((s) => (error as Error).message.includes(s))).toEqual([]);
+      }
+    });
+
+    it('takes the KEK from MASTER_KEK and removes it from process.env', async () => {
+      const { MASTER_KEK_FILE: _f, ...inlineEnv } = env;
+      process.env.MASTER_KEK = keys.kekHex;
+      const inline = await startApp({ MASTER_KEK: keys.kekHex }, undefined, inlineEnv);
+      try {
+        expect(process.env.MASTER_KEK).toBeUndefined();
+        const token = (await call(inline, alice, '/v1/tokenize', { dataType: 'BVN', value: bvn() })).res.json().token;
+        expect((await call(inline, alice, '/v1/detokenize', { token })).res.statusCode).toBe(200);
+      } finally {
+        delete process.env.MASTER_KEK;
+        await inline.close();
+      }
     });
 
     it('refuses an invalid RATE_LIMIT_PER_MINUTE', async () => {
@@ -519,20 +544,22 @@ describe('HTTP interface with access control and audit (PostgreSQL)', () => {
   });
 
   describe('no identifiers or keys leak', () => {
-    it('never writes a synthetic BVN or an API key to any audit row', async () => {
+    it('never writes a synthetic BVN, an API key, the KEK or a master key to any audit row', async () => {
       const rows = JSON.stringify(
         await db.auditLog.findMany({ select: { token: true, credentialId: true, operation: true, outcome: true } }),
       );
       expect(sentBvns.size).toBeGreaterThan(20);
       expect([...sentBvns].filter((v) => rows.includes(v))).toHaveLength(0);
       expect([...issuedKeys].filter((k) => rows.includes(k))).toHaveLength(0);
+      expect(keys.secrets().filter((s) => rows.includes(s))).toHaveLength(0);
     });
 
-    it('never writes a synthetic BVN or an API key to any log line', () => {
+    it('never writes a synthetic BVN, an API key, the KEK or a master key to any log line', () => {
       const all = logLines.join('\n');
       expect(all).toContain('request completed');
       expect([...sentBvns].filter((v) => all.includes(v))).toHaveLength(0);
       expect([...issuedKeys].filter((k) => all.includes(k))).toHaveLength(0);
+      expect(keys.secrets().filter((s) => all.includes(s))).toHaveLength(0);
     });
   });
 });

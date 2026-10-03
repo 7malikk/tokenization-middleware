@@ -4,10 +4,11 @@ Self-hosted middleware that protects permanent identifiers (BVN as the
 representative case) for Nigerian SMEs. It exposes three operations:
 tokenize, detokenize, and erase. See `CLAUDE.md` for the locked design.
 
-Current state: **increment 3**, access control and accountability. The three
-endpoints run over TLS behind API keys with per-operation scopes, a rate limit,
-and an append-only audit log. The master key is still a development stand-in
-(see [Temporary stand-in](#temporary-stand-in)).
+Current state: **increment 4**, key layer and bootstrap. The three endpoints
+run over TLS behind API keys with per-operation scopes, a rate limit, and an
+append-only audit log. Data keys are wrapped under master keys that live in an
+encrypted key file, unlocked at startup by a key-encryption key (KEK) and held
+only in memory.
 
 ## Requirements
 
@@ -34,8 +35,9 @@ from `.env`. Variables already set in the environment take precedence over it.
 | `ALLOWED_DATA_TYPES` | Comma-separated data types tokenize accepts (default `BVN`) |
 | `LOG_LEVEL` | Fastify log level (default `info`). Bodies are never logged |
 | `RATE_LIMIT_PER_MINUTE` | Requests allowed per credential, per operation, per minute (default 600) |
-| `MASTER_KEY_DEV` | Temporary: master key as 64 hex chars |
-| `NODE_ENV` | `production` makes the temporary stand-in refuse to start |
+| `MASTER_KEY_FILE` | Path to the master key file (from `npm run key:init`) |
+| `MASTER_KEK` | The KEK as 64 hex chars. Removed from the process environment once read |
+| `MASTER_KEK_FILE` | Path to a file holding the KEK (for example a Docker secret). Set this or `MASTER_KEK`, never both |
 | `POSTGRES_PORT` | Host port for the Compose postgres service (default 5432) |
 
 ## Database migrations
@@ -52,8 +54,8 @@ npm run prisma:deploy    # apply existing migrations only
 There are two suites.
 
 - **Unit tests** (`npm test`) cover the crypto core, input validation, API key
-  handling, the rate limiter, the CLI argument handling, the temporary key
-  provider, and the test database guard. They need no database.
+  handling, the rate limiter, the CLI argument handling, the key file and
+  key provider (including every startup refusal), and the test database guard. They need no database.
 - **Integration and HTTP tests** (`npm run test:int`) need a reachable
   PostgreSQL at `TEST_DATABASE_URL`. They cover the schema, the vault service,
   the CLI, the append-only audit log, and the HTTP interface (authentication,
@@ -62,9 +64,10 @@ There are two suites.
   with `openssl` and capture all log output to check that no BVN appears in it.
 
 Before any file runs, `prisma migrate deploy` brings the test database up to
-date. The schema test then runs `prisma migrate reset`, which **deletes
-everything** in the test database and then applies every migration from
-scratch. Prisma creates the database if it does not exist. The suite refuses
+date. The schema test and the rotation test each run `prisma migrate reset`,
+which **deletes everything** in the test database and then applies every
+migration from scratch. (Rotation rewraps every live record, so its test needs
+a vault holding only its own records.) Prisma creates the database if it does not exist. The suite refuses
 to start unless the database name in `TEST_DATABASE_URL` ends in `_test` and
 the URL differs from `DATABASE_URL`. The check reads the database name from the
 URL path and ignores the `?schema=` parameter, so
@@ -124,16 +127,78 @@ The server only starts with TLS configured. For local development:
 ```sh
 npm run dev:certs          # self-signed cert and key in certs/ (gitignored)
 npm run prisma:deploy      # apply migrations to DATABASE_URL
-openssl rand -hex 32       # a value for MASTER_KEY_DEV
 ```
 
-Put `TLS_CERT_PATH`, `TLS_KEY_PATH` and `MASTER_KEY_DEV` in `.env`, then:
+Then set up the key layer (next section), put `TLS_CERT_PATH`,
+`TLS_KEY_PATH` and `MASTER_KEY_FILE` in `.env`, and start the server with
+one KEK source:
 
 ```sh
-npm run start
+# KEK from a file (preferred: the KEK never enters the environment)
+MASTER_KEK_FILE=keys/kek npm run start
+
+# or KEK from the environment (removed from process.env once read)
+MASTER_KEK=<64 hex chars> npm run start
 ```
 
-This builds the app and starts NestJS on Fastify over HTTPS at `PORT`.
+This builds the app and starts NestJS on Fastify over HTTPS at `PORT`. At
+startup it reads the KEK, unwraps every master key version into memory, and
+zeroizes the KEK. It refuses to start, with a message that holds no key
+material, if there is no KEK, if both KEK sources are set, if the key file is
+missing or malformed, or if any version fails to unwrap (wrong KEK or a
+tampered file).
+
+## Key layer
+
+Each record's data key is wrapped (AES-KW) under a master key. Master keys are
+stored in `MASTER_KEY_FILE`, each one wrapped under the KEK with the same
+AES-KW primitive, so the file never holds a master key in the clear:
+
+```json
+{ "active": 2, "keys": [{ "version": 1, "wrapped": "<80 hex>" }, { "version": 2, "wrapped": "<80 hex>" }] }
+```
+
+New records use the active version. Each record stores the version it was
+wrapped under, so older versions stay in the file.
+
+### Generate a KEK and initialise the key file
+
+```sh
+npm run -s key:generate-kek
+# MASTER_KEK=<64 hex chars>   (shown once)
+
+# Store the KEK somewhere safe, separate from the key file and the database.
+# For a KEK file:
+umask 077 && printf '%s\n' '<64 hex chars>' > keys/kek
+
+MASTER_KEK_FILE=keys/kek npm run -s key:init
+# KEY_FILE_VERSION=1
+```
+
+`key:init` creates `MASTER_KEY_FILE` (mode 0600) with version 1 and refuses
+if the file already exists. Losing the KEK or the key file makes every token
+unrecoverable, so back both up, separately.
+
+### Rotate the master key
+
+Stop the server first: a running server holds the master keys it loaded at
+startup and would not know the new version.
+
+```sh
+MASTER_KEK_FILE=keys/kek npm run -s key:rotate
+# ACTIVE_VERSION=2
+# ROTATED_RECORDS=1234
+# ERASED_RECORDS_SKIPPED=56
+```
+
+Rotation adds a new version to the key file and makes it active, then
+rewraps the data key of every live record under it, in batches. Only
+`wrapped_data_key` and `master_key_version` change; `ciphertext`, `iv` and
+`auth_tag` are never touched, and erased records (which have no wrapped key)
+are skipped. The new version is written to the key file before any record
+changes. If rotation stops partway, run it again: when live records are still
+below the active version it finishes that rotation instead of adding another
+version. Then start the server again.
 
 ## Applications and credentials
 
@@ -218,13 +283,6 @@ curl -s --cacert certs/dev-cert.pem -H 'Content-Type: application/json' \
   -X POST "$API/erase" -d '{"token":"<token from tokenize>"}'
 ```
 
-## Temporary stand-in
-
-**`DevKeyProvider`** (`src/keys/`) implements the `KeyProvider` seam with the
-master key read in plain hex from `MASTER_KEY_DEV`. It refuses to start when
-`NODE_ENV=production`. Increment 4 replaces it with the encrypted master key
-file unlocked by a KEK at startup.
-
 ## Layout
 
 ```
@@ -232,15 +290,15 @@ prisma/schema.prisma      vault schema (5 tables, 2 enums)
 prisma/migrations/        generated by prisma migrate
 src/app.factory.ts        builds the app: TLS, body limit, JSON parser, logger
 src/crypto/               crypto core (plain functions) and its NestJS provider
-src/keys/                 KeyProvider seam and the temporary DevKeyProvider
+src/keys/                 key file, FileKeyProvider, and master key rotation
 src/auth/                 API keys, guard (auth, scope, rate limit), clock
 src/audit/                audit service and the exception filter that audits failures
 src/prisma/               the shared Prisma client and its append-only extension
-src/cli/                  app:create, cred:create, cred:revoke
+src/cli/                  app, credential and key commands
 src/vault/                endpoints, validation pipes, and the vault service
 scripts/                  dev:certs helper
 test/helpers/             syntheticBvn() and the test database guard
-test/integration/         schema, service, CLI and audit log tests (need PostgreSQL)
+test/integration/         schema, service, CLI, audit log and rotation tests (need PostgreSQL)
 test/http/                HTTP tests (need PostgreSQL and openssl)
 ```
 
