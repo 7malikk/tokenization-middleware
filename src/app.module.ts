@@ -1,7 +1,14 @@
-import { Module } from '@nestjs/common';
-import { CryptoModule } from './crypto/crypto.module';
+import { DynamicModule, Module } from '@nestjs/common';
+import { AuthModule } from './auth/auth.module';
+import { Env, EnvModule } from './config/env';
+import { VaultModule } from './vault/vault.module';
 
-@Module({
-  imports: [CryptoModule],
-})
-export class AppModule {}
+@Module({})
+export class AppModule {
+  static forRoot(env: Env): DynamicModule {
+    return {
+      module: AppModule,
+      imports: [EnvModule.forRoot(env), AuthModule, VaultModule],
+    };
+  }
+}

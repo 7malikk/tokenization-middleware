@@ -15,7 +15,9 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "test": "jest",
-    "test:int": "jest -c jest.int.config.js --runInBand"
+    "test:int": "jest -c jest.int.config.js --runInBand",
+    "dev:certs": "node scripts/dev-certs.js",
+    "dev:app": "node scripts/dev-app.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.7",
