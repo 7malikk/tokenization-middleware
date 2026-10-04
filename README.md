@@ -220,6 +220,49 @@ docker compose down          # stop; add -v to also delete both databases
 For debugging, `docker-compose.db-ports.yml` publishes `vault-db` on
 `127.0.0.1:5433` and `reference-db` on `127.0.0.1:5434`.
 
+### Administering applications and credentials
+
+The admin CLI ships in the middleware image. Run it inside the running
+`middleware` container, from the repository directory, with the stack up. It
+reaches `vault-db` with the container's own database secret, so no password
+or URL is needed on the command line. Its output goes only to your terminal,
+never to the container logs.
+
+Register an application, and note its id:
+
+```sh
+docker compose exec -T middleware node dist/cli/main.js app:create --name billing-service
+# APP_ID=6bbc1fb8-f9de-4df6-ad20-5be07b33f1c0
+```
+
+Issue a credential for it, with only the scopes it needs (any of `TOKENIZE`,
+`DETOKENIZE`, `ERASE`):
+
+```sh
+docker compose exec -T middleware node dist/cli/main.js cred:create --app <APP_ID> --scopes TOKENIZE,DETOKENIZE
+# CREDENTIAL_ID=3a6b3b04-d33f-44a8-975c-63f550af3582
+# API_KEY=tkm_...
+# Store this API key now. It is shown once and cannot be recovered.
+```
+
+Hand the `API_KEY` to the application's own secret store straight away: the
+vault keeps only its SHA-256 hash, so it can never be shown again. Keep the
+`CREDENTIAL_ID`; it is what you revoke. A key works only for its own
+application's tokens, and only for its scopes (a request outside them gets 403).
+
+Revoke a credential. It stops working on the next request (401):
+
+```sh
+docker compose exec -T middleware node dist/cli/main.js cred:revoke --id <CREDENTIAL_ID>
+# REVOKED_AT=2026-10-04T11:50:05.388Z
+```
+
+To replace a key, issue a new credential for the same application, switch the
+application over, then revoke the old one. Nothing is ever deleted: there is
+no delete command, so every audit row keeps pointing at a real credential.
+A command that fails (a duplicate application name, an unknown scope, an
+unknown id) prints the reason and exits with status 1.
+
 ## Running the app natively
 
 The server only starts with TLS configured. For local development:
