@@ -1,17 +1,19 @@
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { Controller, Get, Header, Res, UseFilters } from '@nestjs/common';
+import { Controller, Get, Header, NotFoundException, Param, Res, UseFilters } from '@nestjs/common';
 import { MiddlewareClient } from '../middleware/middleware-client';
 import { MiddlewareErrorFilter } from '../middleware/middleware-error.filter';
 import { PrismaService } from '../prisma/prisma.module';
 
 const PUBLIC_DIR = resolve(__dirname, '../../public');
 
-// The page's three files, read once at startup. Nothing else is served from disk.
+// The page's files, read once at startup. Nothing else is served from disk.
 const ASSETS = {
   'index.html': 'text/html; charset=utf-8',
   'app.js': 'text/javascript; charset=utf-8',
   'app.css': 'text/css; charset=utf-8',
+  'fonts/archivo.woff2': 'font/woff2',
+  'fonts/jetbrains-mono.woff2': 'font/woff2',
 } as const;
 type Asset = keyof typeof ASSETS;
 
@@ -51,6 +53,13 @@ export class DemoController {
   @Get('app.css')
   styles(@Res() reply: Reply): void {
     this.serve(reply, 'app.css');
+  }
+
+  @Get('fonts/:name')
+  font(@Param('name') name: string, @Res() reply: Reply): void {
+    const asset = `fonts/${name}`;
+    if (!Object.hasOwn(ASSETS, asset)) throw new NotFoundException();
+    this.serve(reply, asset as Asset);
   }
 
   /** The app database: customers with their tokens. There is no BVN to show. */

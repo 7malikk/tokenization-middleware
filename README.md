@@ -297,11 +297,14 @@ deliverable: never use it with real data. It adds two things:
   scope and goes through the normal guard, rate limit and audit log. It never
   decrypts or unwraps anything. When `DEMO_INSPECT` is not `true` the route
   does not exist (404).
-- a page at `/` in the reference app, with panels for creating a customer
-  (with a generated synthetic BVN), the app's `customer` table (tokens only),
-  the vault rows (ciphertext, wrapped key, key version, erasure), the audit
-  log, and per-customer Reveal (shows the BVN for 10 seconds) and Erase. The
-  page reads the vault through a separate credential that holds only `INSPECT`.
+- a page at `/` in the reference app, built to be projected: a form for
+  creating a customer (with a generated synthetic BVN) and three side-by-side
+  ledgers, the app's `customer` table (tokens only, with per-customer Reveal
+  and Erase), the vault rows (ciphertext, IV, auth tag, wrapped key, key
+  version, erasure) and the audit log. Reveal shows the BVN for 10 seconds.
+  After each action the affected token is highlighted in all three ledgers.
+  The page reads the vault through a separate credential that holds only
+  `INSPECT`. Its design brief is in `reference_app/PRODUCT.md`.
 
 ### Switching it on
 
@@ -330,7 +333,7 @@ cat secrets/demo-password
 With the demo on, every reference app route (the page, its API, and unknown
 paths) requires that login. The password is compared in constant time. The
 page sets a strict Content-Security-Policy (no inline script or style,
-nothing from other origins), and keeps a revealed BVN only on screen for 10
+nothing from other origins; its two OFL fonts are self-hosted), and keeps a revealed BVN only on screen for 10
 seconds: never in local storage, cookies or logs.
 
 ### Switching it off

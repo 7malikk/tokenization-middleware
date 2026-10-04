@@ -38,6 +38,7 @@ const ROUTES: [string, string][] = [
   ['GET', '/'],
   ['GET', '/app.js'],
   ['GET', '/app.css'],
+  ['GET', '/fonts/archivo.woff2'],
   ['GET', '/customers'],
   ['GET', `/customers/${ZERO_ID}`],
   ['POST', '/customers'],
