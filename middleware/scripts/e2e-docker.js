@@ -210,6 +210,49 @@ async function main() {
   const cli = spawnSync('docker', ['run', '--rm', '--entrypoint', 'sh', 'tokenization-middleware:latest', '-c', 'test ! -e node_modules/prisma && test ! -e node_modules/.bin/prisma']);
   check('middleware image does not ship the Prisma CLI', cli.status === 0);
 
+  // Restart policies, as Docker applied them: long-running services come back
+  // after a reboot or crash; one-shot jobs never rerun on their own.
+  const policies = {};
+  for (const service of ['vault-db', 'reference-db', 'middleware', 'reference-app', 'migrate', 'reference-migrate']) {
+    const id = compose(['ps', '-a', '-q', service]).out.trim().split(/\s+/)[0];
+    policies[service] = id
+      ? execFileSync('docker', ['inspect', '-f', '{{.HostConfig.RestartPolicy.Name}}', id], { encoding: 'utf8' }).trim()
+      : 'missing';
+  }
+  check(
+    'databases, middleware and reference-app restart unless stopped',
+    ['vault-db', 'reference-db', 'middleware', 'reference-app'].every((s) => policies[s] === 'unless-stopped'),
+    JSON.stringify(policies),
+  );
+  check('one-shot migrations never restart', ['migrate', 'reference-migrate'].every((s) => policies[s] === 'no'));
+
+  // A database that exits on its own (not `docker stop`) must come back by itself.
+  const vaultDbBefore = compose(['ps', '-q', 'vault-db']).out.trim();
+  const startedBefore = execFileSync('docker', ['inspect', '-f', '{{.State.StartedAt}}', vaultDbBefore], { encoding: 'utf8' }).trim();
+  compose(['exec', '-T', '-u', 'postgres', 'vault-db', 'pg_ctl', 'stop', '-m', 'fast', '-D', '/var/lib/postgresql/data'], { allowFail: true });
+  let recovered = false;
+  const recoverBy = Date.now() + 90_000;
+  while (Date.now() < recoverBy && !recovered) {
+    await new Promise((r) => setTimeout(r, 2000));
+    const state = execFileSync('docker', ['inspect', '-f', '{{.State.Health.Status}} {{.State.StartedAt}} {{.RestartCount}}', vaultDbBefore], {
+      encoding: 'utf8',
+    }).trim();
+    const [health, startedAt] = state.split(' ');
+    recovered = health === 'healthy' && startedAt !== startedBefore;
+  }
+  check('vault-db restarts by itself after its process exits', recovered);
+  let afterCrash = 0;
+  for (let i = 0; i < 30 && afterCrash !== 201; i++) {
+    const res = await fetch(`${base}/customers`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ fullName: 'After Restart', bvn: syntheticBvn() }),
+    }).catch(() => null);
+    afterCrash = res?.status ?? 0;
+    if (afterCrash !== 201) await new Promise((r) => setTimeout(r, 2000));
+  }
+  check('the stack serves requests again after vault-db restarts', afterCrash === 201, `status ${afterCrash}`);
+
   // Demonstration UI: off by default, then switched on with docker-compose.demo.yml.
   const offPage = await fetch(`${base}/`);
   const offVault = await fetch(`${base}/demo/vault`);
