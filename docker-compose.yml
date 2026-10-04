@@ -49,7 +49,7 @@ services:
       retries: 20
 
   migrate:
-    build: { context: ., target: migrate }
+    build: { context: ./middleware, target: migrate }
     image: tokenization-middleware-migrate:latest
     environment:
       <<: *vault-database
@@ -61,7 +61,7 @@ services:
 
   # Step 1: writes every secret file. No database (none can start without its password).
   setup:
-    build: { context: ., target: setup }
+    build: { context: ./middleware, target: setup }
     image: tokenization-middleware-setup:latest
     profiles: [setup]
     command: ["secrets"]
@@ -73,7 +73,7 @@ services:
 
   # Step 2, and `rotate`: tasks that need the migrated vault database.
   setup-vault:
-    build: { context: ., target: setup }
+    build: { context: ./middleware, target: setup }
     image: tokenization-middleware-setup:latest
     profiles: [setup]
     command: ["vault"]
@@ -89,7 +89,7 @@ services:
     restart: "no"
 
   middleware:
-    build: { context: ., target: runtime }
+    build: { context: ./middleware, target: runtime }
     image: tokenization-middleware:latest
     environment:
       <<: *vault-database
@@ -136,7 +136,7 @@ services:
       retries: 20
 
   reference-migrate:
-    build: { context: ./reference-app, target: migrate }
+    build: { context: ./reference_app, target: migrate }
     image: tokenization-reference-migrate:latest
     environment:
       <<: *reference-database
@@ -147,7 +147,7 @@ services:
     restart: "no"
 
   reference-app:
-    build: { context: ./reference-app, target: runtime }
+    build: { context: ./reference_app, target: runtime }
     image: tokenization-reference-app:latest
     environment:
       <<: *reference-database

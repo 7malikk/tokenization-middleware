@@ -8,7 +8,7 @@ import { join, resolve } from 'node:path';
 /** A self-signed certificate for localhost in a temp directory (uses openssl). */
 export function makeCert(): { dir: string; certPath: string; cert: Buffer; key: Buffer } {
   const dir = mkdtempSync(join(tmpdir(), 'ref-cert-'));
-  execFileSync(process.execPath, [resolve(__dirname, '../../../scripts/dev-certs.js'), dir], { stdio: 'pipe' });
+  execFileSync(process.execPath, [resolve(__dirname, '../../../middleware/scripts/dev-certs.js'), dir], { stdio: 'pipe' });
   const certPath = join(dir, 'dev-cert.pem');
   return { dir, certPath, cert: readFileSync(certPath), key: readFileSync(join(dir, 'dev-key.pem')) };
 }

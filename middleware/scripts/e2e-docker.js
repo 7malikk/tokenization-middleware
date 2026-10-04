@@ -13,7 +13,7 @@ const { tmpdir } = require('node:os');
 const { join, resolve } = require('node:path');
 const { randomInt } = require('node:crypto');
 
-const ROOT = resolve(__dirname, '..');
+const ROOT = resolve(__dirname, '../..');
 const PROJECT = 'tokenization-e2e';
 // The system temp dir is shared with the Docker VM by default on every engine
 // (Docker Desktop cannot mount from protected folders such as ~/Documents).
