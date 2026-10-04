@@ -158,9 +158,9 @@ A database takes its password when its volume is first initialised. Keep
 existing volume, that database will refuse it. To start over, run
 `docker compose down -v` (this deletes both databases) and set up again.
 
-On Docker Desktop for Mac, if the clone sits in `~/Documents`, `~/Desktop` or
-`~/Downloads`, macOS blocks Docker from mounting `secrets/` and `keys/`
-("operation not permitted"). Grant Docker Desktop access in System Settings,
+On Docker Desktop for Mac, if the clone sits in a privacy-protected folder
+such as `~/Documents`, macOS can block Docker from mounting `secrets/` and
+`keys/` ("operation not permitted"). Grant Docker Desktop access in System Settings,
 Privacy & Security, Files and Folders, or clone somewhere else.
 
 `secrets/` and `keys/` are gitignored and excluded from every image. Back up
