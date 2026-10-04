@@ -130,11 +130,15 @@ npm run test:int
 
 The full deployment has its own end-to-end test, which builds the images and
 runs a clean, isolated stack (separate Compose project, secrets and ports),
-then tears it down. Run it from `middleware/`:
+then tears it down. It runs from `middleware/`:
 
 ```sh
+cd middleware
 npm run e2e:docker
 ```
+
+On OrbStack, the check that the reference app cannot reach `vault-db` by IP is
+reported as SKIP (see below). On any other engine it must pass.
 
 ## Deploy with Docker
 
@@ -218,7 +222,8 @@ not on it, so it has no network path to `vault-db`. This relies on the Docker
 Engine isolating bridge networks from each other, which it does on Linux and
 in Docker Desktop. OrbStack does not enforce that isolation: there the
 reference app cannot resolve `vault-db` by name but can still reach it by IP,
-and `npm run e2e:docker` reports that check as failed. The middleware and
+and `npm run e2e:docker` (run from `middleware/`) reports that check as SKIP
+there. It still fails on any other engine that lets the connection through. The middleware and
 reference app run as a non-root user with a read-only root filesystem and no
 Linux capabilities. Secrets reach containers only as Compose secrets under
 `/run/secrets`; the reference app receives the middleware certificate and its
