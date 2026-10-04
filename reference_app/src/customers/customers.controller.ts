@@ -1,10 +1,6 @@
 import {
-  ArgumentsHost,
-  BadGatewayException,
   Body,
-  Catch,
   Controller,
-  ExceptionFilter,
   Get,
   Header,
   HttpCode,
@@ -13,9 +9,8 @@ import {
   Post,
   UseFilters,
 } from '@nestjs/common';
-import { BaseExceptionFilter } from '@nestjs/core';
 import { Customer } from '@prisma/client';
-import { MiddlewareError } from '../middleware/middleware-client';
+import { MiddlewareErrorFilter } from '../middleware/middleware-error.filter';
 import { CreateCustomerBody, CreateCustomerPipe, CustomerIdPipe } from './customers.pipes';
 import { CustomersService } from './customers.service';
 
@@ -28,14 +23,6 @@ interface CustomerView {
 const view = (c: Customer): CustomerView => ({ id: c.id, fullName: c.fullName, bvnToken: c.bvnToken });
 const customerNotFound = () => new NotFoundException('customer not found');
 const bvnNotAvailable = () => new NotFoundException('BVN not available');
-
-/** Any middleware failure becomes one fixed 502. Nothing from the middleware is passed on. */
-@Catch(MiddlewareError)
-class MiddlewareErrorFilter extends BaseExceptionFilter implements ExceptionFilter {
-  override catch(_exception: MiddlewareError, host: ArgumentsHost): void {
-    super.catch(new BadGatewayException('tokenization service unavailable'), host);
-  }
-}
 
 @Controller('customers')
 @UseFilters(MiddlewareErrorFilter)

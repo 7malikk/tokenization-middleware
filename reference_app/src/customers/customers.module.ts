@@ -1,10 +1,11 @@
 import { Module } from '@nestjs/common';
-import { MiddlewareClient } from '../middleware/middleware-client';
+import { MiddlewareModule } from '../middleware/middleware.module';
 import { CustomersController } from './customers.controller';
 import { CustomersService } from './customers.service';
 
 @Module({
+  imports: [MiddlewareModule],
   controllers: [CustomersController],
-  providers: [CustomersService, MiddlewareClient],
+  providers: [CustomersService],
 })
 export class CustomersModule {}

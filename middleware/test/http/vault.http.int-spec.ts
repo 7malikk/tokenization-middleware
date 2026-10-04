@@ -460,6 +460,98 @@ describe('HTTP interface with access control and audit (PostgreSQL)', () => {
     });
   });
 
+  describe('demo inspect endpoint', () => {
+    let demo: NestFastifyApplication;
+    let inspector: Credential; // INSPECT only, alice's application
+
+    beforeAll(async () => {
+      demo = await startApp({ DEMO_INSPECT: 'true' });
+      inspector = await newCredential(['INSPECT'], alice.appId);
+    });
+
+    afterAll(async () => {
+      await demo.close();
+    });
+
+    it('does not exist when DEMO_INSPECT is off: the same 404 as any unknown route, and no audit row', async () => {
+      const { res } = await call(app, inspector, '/v1/demo/inspect', {}, 0);
+      const unknown = await call(app, inspector, '/v1/demo/no-such-route', {}, 0);
+      expect(res.statusCode).toBe(404);
+      expect(res.json().message).toBe(unknown.res.json().message.replace('no-such-route', 'inspect'));
+    });
+
+    it('refuses a credential without the INSPECT scope with 403 and a FORBIDDEN_SCOPE row', async () => {
+      const { res, row } = await call(demo, alice, '/v1/demo/inspect', {});
+      expect(res.statusCode).toBe(403);
+      expect(row).toMatchObject({ operation: 'INSPECT', outcome: 'FORBIDDEN_SCOPE', credentialId: alice.id });
+      expect((await call(demo, null, '/v1/demo/inspect', {})).res.statusCode).toBe(401);
+    });
+
+    it("returns only the caller's records and audit rows, as stored bytes, with one INSPECT row per call", async () => {
+      const mine = await tokenize(alice);
+      const erased = await tokenize(alice);
+      await post(alice, '/v1/erase', { token: erased });
+      const theirs = await tokenize(bob);
+      await post(bob, '/v1/detokenize', { token: theirs });
+
+      const { res, row } = await call(demo, inspector, '/v1/demo/inspect', {});
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['cache-control']).toBe('no-store');
+      expect(row).toMatchObject({ operation: 'INSPECT', outcome: 'SUCCESS', credentialId: inspector.id, token: null });
+
+      const body = res.json();
+      expect(Object.keys(body).sort()).toEqual(['audit', 'records']);
+      expect(body.records.length).toBeGreaterThan(0);
+      expect(body.records.length).toBeLessThanOrEqual(20);
+      expect(body.audit.length).toBeLessThanOrEqual(20);
+
+      // Every record belongs to alice's application; bob's token never appears anywhere.
+      const owners = await db.vaultRecord.findMany({
+        where: { token: { in: body.records.map((r: { token: string }) => r.token) } },
+        select: { appId: true },
+      });
+      expect(owners.every((o) => o.appId === alice.appId)).toBe(true);
+      expect(res.body.includes(theirs)).toBe(false);
+
+      const live = body.records.find((r: { token: string }) => r.token === mine);
+      expect(Object.keys(live).sort()).toEqual(
+        ['authTag', 'ciphertext', 'createdAt', 'dataType', 'erasedAt', 'iv', 'masterKeyVersion', 'token', 'wrappedDataKey'].sort(),
+      );
+      expect(live.iv).toMatch(/^[0-9a-f]{24}$/);
+      expect(live.authTag).toMatch(/^[0-9a-f]{32}$/);
+      expect(live.wrappedDataKey).toMatch(/^[0-9a-f]{80}$/);
+      expect(live.erasedAt).toBeNull();
+      const gone = body.records.find((r: { token: string }) => r.token === erased);
+      expect(gone.wrappedDataKey).toBeNull();
+      expect(gone.erasedAt).not.toBeNull();
+
+      for (const a of body.audit) {
+        expect(Object.keys(a).sort()).toEqual(['occurredAt', 'operation', 'outcome', 'token']);
+      }
+      expect(body.audit.some((a: { token: string | null }) => a.token === erased)).toBe(true);
+
+      // No identifier, API key, KEK or master key, in any encoding.
+      const text = res.body;
+      expect([...sentBvns].filter((v) => text.includes(v) || text.includes(Buffer.from(v).toString('hex')))).toEqual([]);
+      expect([...issuedKeys].filter((k) => text.includes(k))).toEqual([]);
+      expect(keys.secrets().filter((s) => text.toLowerCase().includes(s.toLowerCase()))).toEqual([]);
+    });
+
+    it('writes exactly one INSPECT row on every call', async () => {
+      for (let i = 0; i < 3; i++) {
+        const { res, row } = await call(demo, inspector, '/v1/demo/inspect', {});
+        expect(res.statusCode).toBe(200);
+        expect(row.operation).toBe('INSPECT');
+      }
+    });
+
+    it('refuses to start with an invalid DEMO_INSPECT value', async () => {
+      await expect(createApp({ ...env, DEMO_INSPECT: 'yes' }, { nestLogger: captureNestLogger })).rejects.toThrow(
+        'DEMO_INSPECT',
+      );
+    });
+  });
+
   describe('TLS', () => {
     it('serves the API over HTTPS and not over plain HTTP', async () => {
       await app.listen(0, '127.0.0.1');

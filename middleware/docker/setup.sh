@@ -3,7 +3,8 @@
 # prints a secret.
 #
 #   docker compose run --rm setup               1. secrets: TLS, KEK, key file, database passwords
-#   docker compose run --rm setup-vault         2. the reference app's credential (needs vault-db)
+#   docker compose run --rm setup-vault         2. the reference app's credential (needs vault-db);
+#                                                  with DEMO_INSPECT=true also its INSPECT credential
 #   docker compose run --rm setup-vault rotate  rotate the master key (stop the middleware first)
 #
 # Step 1 needs no database: the databases cannot start until their password
@@ -68,6 +69,15 @@ secrets_phase() {
     fi
   done
 
+  # Demo login for the reference app's page. Only used when the demo is switched on.
+  if [ -f "$SECRETS/demo-password" ]; then
+    echo "Demo password: keeping existing"
+  else
+    node -e "process.stdout.write(require('crypto').randomBytes(16).toString('base64url'))" > "$SECRETS/demo-password"
+    own "$SECRETS/demo-password"
+    echo "Demo password: generated (secrets/demo-password, user \"demo\")"
+  fi
+
   echo "Step 1 complete. Next: docker compose run --rm setup-vault"
 }
 
@@ -82,11 +92,31 @@ vault_phase() {
       echo "cred:create and save it to secrets/reference-api-key." >&2
       exit 1
     fi
+    printf '%s\n' "$app_id" > "$SECRETS/reference-app-id"
+    own "$SECRETS/reference-app-id"
     out=$(cli cred:create --app "$app_id" --scopes TOKENIZE,DETOKENIZE,ERASE 2> /dev/null)
     printf '%s\n' "$out" | sed -n 's/^API_KEY=//p' > "$SECRETS/reference-api-key"
     own "$SECRETS/reference-api-key"
     cred_id=$(printf '%s\n' "$out" | sed -n 's/^CREDENTIAL_ID=//p')
     echo "Reference app credential: application $app_id, credential $cred_id"
+  fi
+
+  # Demo only: a separate credential with just the INSPECT scope, for the same application.
+  if [ "${DEMO_INSPECT:-false}" = "true" ]; then
+    if [ -f "$SECRETS/reference-inspect-key" ]; then
+      echo "Reference app INSPECT credential (demo): keeping existing"
+    elif [ ! -f "$SECRETS/reference-app-id" ]; then
+      echo "Cannot issue the demo INSPECT credential: secrets/reference-app-id is missing." >&2
+      echo "Issue one with cred:create --scopes INSPECT and save the key to secrets/reference-inspect-key." >&2
+      exit 1
+    else
+      app_id=$(cat "$SECRETS/reference-app-id")
+      out=$(cli cred:create --app "$app_id" --scopes INSPECT 2> /dev/null)
+      printf '%s\n' "$out" | sed -n 's/^API_KEY=//p' > "$SECRETS/reference-inspect-key"
+      own "$SECRETS/reference-inspect-key"
+      cred_id=$(printf '%s\n' "$out" | sed -n 's/^CREDENTIAL_ID=//p')
+      echo "Reference app INSPECT credential (demo): credential $cred_id"
+    fi
   fi
   echo "Setup complete. Start the stack with: docker compose up -d"
 }

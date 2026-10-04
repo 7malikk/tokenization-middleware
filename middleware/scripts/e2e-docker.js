@@ -210,8 +210,66 @@ async function main() {
   const cli = spawnSync('docker', ['run', '--rm', '--entrypoint', 'sh', 'tokenization-middleware:latest', '-c', 'test ! -e node_modules/prisma && test ! -e node_modules/.bin/prisma']);
   check('middleware image does not ship the Prisma CLI', cli.status === 0);
 
+  // Demonstration UI: off by default, then switched on with docker-compose.demo.yml.
+  const offPage = await fetch(`${base}/`);
+  const offVault = await fetch(`${base}/demo/vault`);
+  check('demo off: no page and no vault view', offPage.status === 404 && offVault.status === 404);
+  const demo = (args, opts) => compose(['-f', 'docker-compose.yml', '-f', 'docker-compose.demo.yml', ...args], opts);
+  const demoSetup = demo(['run', '--rm', 'setup-vault']);
+  setup.out += demoSetup.out;
+  check('demo setup issues the INSPECT credential', /INSPECT credential \(demo\): credential/.test(demoSetup.out));
+  demo(['up', '-d']);
+  const demoPassword = compose(['exec', '-T', 'reference-app', 'cat', '/run/secrets/demo_password']).out.trim();
+  const inspectKey = compose(['exec', '-T', 'reference-app', 'cat', '/run/secrets/reference_inspect_key']).out.trim();
+  const auth = { authorization: `Basic ${Buffer.from(`demo:${demoPassword}`).toString('base64')}` };
+  const deadline = Date.now() + 120_000;
+  let page;
+  while (Date.now() < deadline) {
+    page = await fetch(`${base}/`, { headers: auth }).catch(() => null);
+    if (page?.status === 200) break;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  check('demo on: the page loads with the demo login', page?.status === 200, `status ${page?.status}`);
+  const csp = page?.headers.get('content-security-policy') ?? '';
+  check('demo page sends a strict CSP', csp.includes("script-src 'self'") && !csp.includes('unsafe-inline'));
+  const noLogin = await fetch(`${base}/customers`);
+  const wrongLogin = await fetch(`${base}/customers`, {
+    headers: { authorization: `Basic ${Buffer.from('demo:not-the-password').toString('base64')}` },
+  });
+  check('demo login is required, and a wrong password is refused', noLogin.status === 401 && wrongLogin.status === 401);
+
+  const demoBvn = syntheticBvn();
+  const demoCreate = await fetch(`${base}/customers`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify({ fullName: 'Demo Customer', bvn: demoBvn }),
+  });
+  const demoCustomer = await demoCreate.json();
+  const appPanel = await (await fetch(`${base}/customers`, { headers: auth })).text();
+  check('demo: the app panel shows the token and no BVN', appPanel.includes(demoCustomer.bvnToken) && !appPanel.includes(demoBvn));
+  const vaultView = async () => (await fetch(`${base}/demo/vault`, { headers: auth })).json();
+  const vaultBefore = await vaultView();
+  const rowBefore = vaultBefore.records.find((r) => r.token === demoCustomer.bvnToken);
+  check('demo: the vault panel shows the row with its wrapped key', /^[0-9a-f]{80}$/.test(rowBefore?.wrappedDataKey ?? ''));
+  check('demo: the vault view holds no BVN', !JSON.stringify(vaultBefore).includes(demoBvn));
+  const demoReveal = await fetch(`${base}/customers/${demoCustomer.id}/reveal-bvn`, { method: 'POST', headers: auth });
+  check('demo: reveal returns the BVN once', demoReveal.status === 200 && (await demoReveal.json()).bvn === demoBvn);
+  const demoErase = await fetch(`${base}/customers/${demoCustomer.id}/erase`, { method: 'POST', headers: auth });
+  check('demo: erase succeeds', demoErase.status === 200);
+  const vaultAfter = await vaultView();
+  const rowAfter = vaultAfter.records.find((r) => r.token === demoCustomer.bvnToken);
+  check('demo: the wrapped key is now destroyed (null) and erased_at is set', rowAfter?.wrappedDataKey === null && rowAfter?.erasedAt !== null);
+  check(
+    'demo: the audit panel shows the erase and INSPECT rows',
+    vaultAfter.audit.some((a) => a.operation === 'ERASE' && a.token === demoCustomer.bvnToken) &&
+      vaultAfter.audit.some((a) => a.operation === 'INSPECT'),
+  );
+  const demoRevealAfter = await fetch(`${base}/customers/${demoCustomer.id}/reveal-bvn`, { method: 'POST', headers: auth });
+  check('demo: reveal fails after erase', demoRevealAfter.status === 404);
+
   // No identifier or secret in any container log.
   const logs = compose(['logs', '--no-color']).out + setup.out;
+  check('no demo BVN, demo password or INSPECT key in any container log', [demoBvn, demoPassword, inspectKey].every((s) => s.length > 0 && !logs.includes(s)));
   // Read the secrets from inside the containers: on some engines the bind-mount
   // source lives in the Docker VM rather than on the host.
   const secrets = [

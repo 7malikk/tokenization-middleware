@@ -4,6 +4,8 @@ import { AuthModule } from './auth/auth.module';
 import { Clock } from './auth/clock';
 import { ClockModule } from './auth/clock.module';
 import { Env, EnvModule } from './config/env';
+import { DemoModule } from './demo/demo.module';
+import { demoInspectEnabled } from './demo/demo-inspect';
 import { PrismaModule } from './prisma/prisma.module';
 import { VaultModule } from './vault/vault.module';
 
@@ -24,6 +26,8 @@ export class AppModule {
         AuditModule,
         AuthModule,
         VaultModule,
+        // Demo only, off by default: when off the inspect route does not exist.
+        ...(demoInspectEnabled(env) ? [DemoModule] : []),
       ],
     };
   }

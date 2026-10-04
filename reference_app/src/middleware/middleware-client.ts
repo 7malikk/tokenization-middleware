@@ -5,7 +5,7 @@ import { ENV, Env } from '../config/env';
 
 const API_KEY_FORMAT = /^tkm_[A-Za-z0-9_-]{43}$/;
 const TOKEN_FORMAT = /^[0-9a-f]{32}$/;
-const MAX_RESPONSE_BYTES = 16 * 1024;
+const MAX_RESPONSE_BYTES = 64 * 1024;
 const TIMEOUT_MS = 5000;
 
 /** The middleware failed or refused. Never carries a response body or identifier. */
@@ -17,19 +17,18 @@ export class MiddlewareError extends Error {
 }
 
 /**
- * Read this app's API key from exactly one of REFERENCE_API_KEY or
- * REFERENCE_API_KEY_FILE. A key from REFERENCE_API_KEY is removed from the
- * environment once read.
+ * Read an API key from exactly one of <name> or <name>_FILE (by default
+ * REFERENCE_API_KEY). A key from <name> is removed from the environment once read.
  */
-export function takeApiKey(env: Env): string {
-  const inline = env.REFERENCE_API_KEY;
-  const file = env.REFERENCE_API_KEY_FILE;
+export function takeApiKey(env: Env, name = 'REFERENCE_API_KEY'): string {
+  const inline = env[name];
+  const file = env[`${name}_FILE`];
   if (inline !== undefined) {
-    delete env.REFERENCE_API_KEY;
-    delete process.env.REFERENCE_API_KEY;
+    delete env[name];
+    delete process.env[name];
   }
   if (inline && file) {
-    throw new Error('set only one of REFERENCE_API_KEY and REFERENCE_API_KEY_FILE');
+    throw new Error(`set only one of ${name} and ${name}_FILE`);
   }
   let key: string;
   if (inline) {
@@ -38,15 +37,20 @@ export function takeApiKey(env: Env): string {
     try {
       key = readFileSync(file, 'utf8').trim();
     } catch {
-      throw new Error('REFERENCE_API_KEY_FILE could not be read');
+      throw new Error(`${name}_FILE could not be read`);
     }
   } else {
-    throw new Error('no API key: set REFERENCE_API_KEY or REFERENCE_API_KEY_FILE');
+    throw new Error(`no API key: set ${name} or ${name}_FILE`);
   }
   if (!API_KEY_FORMAT.test(key)) {
-    throw new Error('the API key is not in the expected tkm_ format');
+    throw new Error(`the key in ${name} is not in the expected tkm_ format`);
   }
   return key;
+}
+
+/** Demo only: true when DEMO_PASSWORD_FILE is set (page, demo routes, Basic auth). */
+export function demoEnabled(env: Env): boolean {
+  return Boolean(env.DEMO_PASSWORD_FILE);
 }
 
 /**
@@ -58,6 +62,8 @@ export class MiddlewareClient implements OnModuleDestroy {
   private readonly base: URL;
   private readonly agent: Agent;
   readonly #authorization: string;
+  /** Demo only: a separate credential holding just the INSPECT scope. */
+  readonly #inspectAuthorization: string | null;
 
   constructor(@Inject(ENV) env: Env) {
     let base: URL;
@@ -82,6 +88,22 @@ export class MiddlewareClient implements OnModuleDestroy {
     // `ca` replaces Node's default trust store, so only this certificate is trusted.
     this.agent = new Agent({ ca, keepAlive: true, rejectUnauthorized: true });
     this.#authorization = `Bearer ${takeApiKey(env)}`;
+    this.#inspectAuthorization = demoEnabled(env) ? `Bearer ${takeApiKey(env, 'REFERENCE_INSPECT_KEY')}` : null;
+  }
+
+  /**
+   * Demo only: what the vault stores for this application, from the
+   * middleware's inspect endpoint (stored bytes as hex, never plaintext).
+   */
+  async inspect(): Promise<{ records: unknown[]; audit: unknown[] }> {
+    if (!this.#inspectAuthorization) {
+      throw new MiddlewareError(null);
+    }
+    const { status, body } = await this.post('/v1/demo/inspect', {}, this.#inspectAuthorization);
+    if (status !== 200 || !Array.isArray(body?.records) || !Array.isArray(body?.audit)) {
+      throw new MiddlewareError(status);
+    }
+    return { records: body.records as unknown[], audit: body.audit as unknown[] };
   }
 
   async tokenize(bvn: string): Promise<string> {
@@ -120,7 +142,11 @@ export class MiddlewareClient implements OnModuleDestroy {
     this.agent.destroy();
   }
 
-  private post(path: string, payload: object): Promise<{ status: number; body: Record<string, unknown> | null }> {
+  private post(
+    path: string,
+    payload: object,
+    authorization = this.#authorization,
+  ): Promise<{ status: number; body: Record<string, unknown> | null }> {
     const data = JSON.stringify(payload);
     return new Promise((resolve, reject) => {
       const req = request(
@@ -132,7 +158,7 @@ export class MiddlewareClient implements OnModuleDestroy {
           headers: {
             'content-type': 'application/json',
             'content-length': Buffer.byteLength(data),
-            authorization: this.#authorization,
+            authorization,
           },
         },
         (res) => {

@@ -46,7 +46,7 @@ export const COMMANDS: Readonly<Record<string, Command>> = {
       strict: true,
     });
     if (!values.app || !values.scopes) {
-      throw new AdminError('usage: cred:create --app <appId> --scopes TOKENIZE,DETOKENIZE,ERASE');
+      throw new AdminError('usage: cred:create --app <appId> --scopes TOKENIZE,DETOKENIZE,ERASE (INSPECT for the demo only)');
     }
     const credential = await createCredential(db(), values.app, parseScopes(values.scopes));
     io.out(`CREDENTIAL_ID=${credential.id}`);

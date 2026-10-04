@@ -30,6 +30,8 @@ COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/dist ./dist
 COPY package.json ./
+# The demonstration page (served only when the demo is switched on).
+COPY public ./public
 USER node
 EXPOSE 8080
 CMD ["node", "dist/main.js"]

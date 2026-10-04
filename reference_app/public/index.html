@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tokenization demo</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header>
+    <h1>Tokenization middleware: demonstration</h1>
+    <p class="lede">
+      A reference application that stores only BVN tokens. Watch what each side
+      holds as you create, reveal and erase. <strong>Synthetic data only:</strong>
+      never enter a real BVN.
+    </p>
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+  </header>
+
+  <main>
+    <section class="panel" aria-labelledby="create-title">
+      <h2 id="create-title"><span class="step">1</span> Create a customer</h2>
+      <form id="create-form" autocomplete="off">
+        <label>Full name
+          <input id="full-name" name="fullName" maxlength="200" required>
+        </label>
+        <label>BVN <span class="tag">synthetic</span>
+          <input id="bvn" name="bvn" readonly placeholder="press Generate" inputmode="numeric">
+        </label>
+        <div class="buttons">
+          <button type="button" id="generate">Generate synthetic BVN</button>
+          <button type="submit" id="create">Create customer</button>
+        </div>
+      </form>
+      <p class="note">The BVN goes to the middleware once, to be tokenized. The app keeps only the token.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="app-title">
+      <h2 id="app-title"><span class="step">2</span> App database <code>customer</code></h2>
+      <p class="note">What the reference application stores. There is no BVN column.</p>
+      <table>
+        <thead><tr><th>id</th><th>full_name</th><th>bvn_token</th></tr></thead>
+        <tbody id="customers-body"></tbody>
+      </table>
+    </section>
+
+    <section class="panel wide" aria-labelledby="vault-title">
+      <h2 id="vault-title"><span class="step">3</span> Vault <code>vault_record</code></h2>
+      <p class="note">What the middleware stores for this application: ciphertext under a per-record data key, which is itself wrapped under the master key. Erasure destroys the wrapped key; the ciphertext stays but can never be decrypted.</p>
+      <table>
+        <thead><tr><th>token</th><th>ciphertext</th><th>wrapped key</th><th>key version</th><th>erased_at</th></tr></thead>
+        <tbody id="vault-body"></tbody>
+      </table>
+    </section>
+
+    <section class="panel wide" aria-labelledby="audit-title">
+      <h2 id="audit-title"><span class="step">4</span> Audit log <code>audit_log</code></h2>
+      <p class="note">Newest first. The outcome is the true one, even when the client only saw "not found".
+        <label class="inline"><input type="checkbox" id="hide-inspect" checked> hide the demo's own INSPECT rows</label>
+      </p>
+      <table>
+        <thead><tr><th>time</th><th>operation</th><th>outcome</th><th>token</th></tr></thead>
+        <tbody id="audit-body"></tbody>
+      </table>
+    </section>
+
+    <section class="panel wide" aria-labelledby="actions-title">
+      <h2 id="actions-title"><span class="step">5</span> Per customer</h2>
+      <p class="note">Reveal asks the middleware to detokenize and shows the BVN for 10 seconds. Erase destroys the record's key in the vault.</p>
+      <p id="revealed" class="revealed" hidden></p>
+      <table>
+        <thead><tr><th>full_name</th><th>bvn_token</th><th></th></tr></thead>
+        <tbody id="actions-body"></tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

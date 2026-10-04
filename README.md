@@ -4,12 +4,13 @@ Self-hosted middleware that protects permanent identifiers (BVN as the
 representative case) for Nigerian SMEs. It exposes three operations:
 tokenize, detokenize, and erase. See `CLAUDE.md` for the locked design.
 
-Current state: **increment 5**, packaging and reference integration. The three endpoints
+Current state: **increment 6**, demonstration UI. The three endpoints
 run over TLS behind API keys with per-operation scopes, a rate limit, and an
 append-only audit log. Data keys are wrapped under master keys that live in an
 encrypted key file, unlocked at startup by a key-encryption key (KEK) and held
 only in memory. It ships as a Docker Compose stack alongside a reference
-application that stores only tokens.
+application that stores only tokens, and an optional demonstration page
+(off by default) for watching segregation and erasure happen.
 
 The repository holds two separate Node.js projects and the Compose files that
 run them together:
@@ -50,6 +51,7 @@ from `.env`. Variables already set in the environment take precedence over it.
 | `ALLOWED_DATA_TYPES` | Comma-separated data types tokenize accepts (default `BVN`) |
 | `LOG_LEVEL` | Fastify log level (default `info`). Bodies are never logged |
 | `RATE_LIMIT_PER_MINUTE` | Requests allowed per credential, per operation, per minute (default 600) |
+| `DEMO_INSPECT` | `true` registers the demo-only `POST /v1/demo/inspect` (default `false`: the route does not exist) |
 | `MASTER_KEY_FILE` | Path to the master key file (from `npm run key:init`) |
 | `MASTER_KEK` | The KEK as 64 hex chars. Removed from the process environment once read |
 | `MASTER_KEK_FILE` | Path to a file holding the KEK (for example a Docker secret). Set this or `MASTER_KEK`, never both |
@@ -163,6 +165,7 @@ then registers the reference app.
 | `keys/master-keys.json` | 1 | The master key file, mounted read-only |
 | `secrets/vault-db-password` | 1 | Random password for `vault-db` |
 | `secrets/reference-db-password` | 1 | Random password for `reference-db` |
+| `secrets/demo-password` | 1 | Login for the demonstration page (used only when the demo is on) |
 | `secrets/reference-api-key` | 2 | The reference app's credential (all three scopes) |
 
 Each database reads its password with `POSTGRES_PASSWORD_FILE`. The services
@@ -282,6 +285,64 @@ application over, then revoke the old one. Nothing is ever deleted: there is
 no delete command, so every audit row keeps pointing at a real credential.
 A command that fails (a duplicate application name, an unknown scope, an
 unknown id) prints the reason and exits with status 1.
+
+## Demonstration UI
+
+**For demonstration only, and off by default.** It is not part of the
+deliverable: never use it with real data. It adds two things:
+
+- the middleware's `POST /v1/demo/inspect`, which returns what the vault
+  stores for the calling application (the 20 newest records as stored bytes in
+  hex, and its 20 newest audit rows). It needs a credential with the `INSPECT`
+  scope and goes through the normal guard, rate limit and audit log. It never
+  decrypts or unwraps anything. When `DEMO_INSPECT` is not `true` the route
+  does not exist (404).
+- a page at `/` in the reference app, with panels for creating a customer
+  (with a generated synthetic BVN), the app's `customer` table (tokens only),
+  the vault rows (ciphertext, wrapped key, key version, erasure), the audit
+  log, and per-customer Reveal (shows the BVN for 10 seconds) and Erase. The
+  page reads the vault through a separate credential that holds only `INSPECT`.
+
+### Switching it on
+
+`docker-compose.demo.yml` turns on the inspect endpoint, has `setup-vault`
+issue the reference app's `INSPECT` credential, and puts the reference app's
+page behind its login. Use both Compose files for every command (setting
+`COMPOSE_FILE` does that once for the shell):
+
+```sh
+export COMPOSE_FILE=docker-compose.yml:docker-compose.demo.yml
+
+docker compose run --rm setup          # skip if done; creates secrets/demo-password
+docker compose run --rm setup-vault    # issues secrets/reference-inspect-key
+docker compose up -d
+```
+
+### Logging in
+
+Open http://localhost:8080 . The browser asks for a login: user `demo`, and
+the password in `secrets/demo-password`:
+
+```sh
+cat secrets/demo-password
+```
+
+With the demo on, every reference app route (the page, its API, and unknown
+paths) requires that login. The password is compared in constant time. The
+page sets a strict Content-Security-Policy (no inline script or style,
+nothing from other origins), and keeps a revealed BVN only on screen for 10
+seconds: never in local storage, cookies or logs.
+
+### Switching it off
+
+```sh
+unset COMPOSE_FILE
+docker compose up -d     # recreates the middleware and reference app without the demo
+```
+
+The INSPECT credential stays registered. Revoke it if you no longer need it
+(see [Administering applications and credentials](#administering-applications-and-credentials));
+its id is printed by `setup-vault`.
 
 ## Running the app natively
 
@@ -407,6 +468,11 @@ and authenticates with its own API key.
 After erasure, reveal returns 404. Any middleware failure becomes one fixed
 502. If saving a customer fails after tokenizing, the new token is erased.
 
+With the demo on (`DEMO_PASSWORD_FILE` set, plus `REFERENCE_INSPECT_KEY` or
+`REFERENCE_INSPECT_KEY_FILE`), it also serves the demonstration page at `/`,
+`GET /customers` (the customer list) and `GET /demo/vault` (the middleware's
+inspect view), all behind HTTP Basic auth. See [Demonstration UI](#demonstration-ui).
+
 ### Running the reference app natively
 
 With the middleware running natively (see above):
@@ -493,6 +559,7 @@ curl -s --cacert certs/dev-cert.pem -H 'Content-Type: application/json' \
 
 ```
 docker-compose.yml                   full stack; docker-compose.db-ports.yml for debugging
+docker-compose.demo.yml              switches the demonstration UI on
 middleware/Dockerfile                middleware image (runtime, migrate and setup targets)
 middleware/docker/setup.sh           the setup service's script
 middleware/prisma/schema.prisma      vault schema (5 tables, 2 enums)
@@ -505,11 +572,13 @@ middleware/src/audit/                audit service and the exception filter that
 middleware/src/prisma/               the shared Prisma client and its append-only extension
 middleware/src/cli/                  app, credential and key commands
 middleware/src/vault/                endpoints, validation pipes, and the vault service
+middleware/src/demo/                 demo-only inspect endpoint (DEMO_INSPECT=true)
 middleware/scripts/                  dev:certs helper and the Docker e2e test
 middleware/test/helpers/             syntheticBvn() and the test database guard
 middleware/test/integration/         schema, service, CLI, audit log and rotation tests (need PostgreSQL)
 middleware/test/http/                HTTP tests (need PostgreSQL and openssl)
 reference_app/                       the reference application (own schema, database, tests)
+reference_app/public/                the demonstration page (HTML, CSS, JavaScript)
 ```
 
 ## Data and logging rules

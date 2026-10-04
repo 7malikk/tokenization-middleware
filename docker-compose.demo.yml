@@ -1,0 +1,33 @@
+# DEMONSTRATION ONLY. Switches on the demo UI: the middleware's inspect
+# endpoint and the reference app's page at http://localhost:8080, behind HTTP
+# Basic auth (user "demo", password in secrets/demo-password). Not part of
+# the deliverable; never use it for real data.
+#
+#   export COMPOSE_FILE=docker-compose.yml:docker-compose.demo.yml
+#   docker compose run --rm setup          # if not done yet
+#   docker compose run --rm setup-vault    # also issues the INSPECT credential
+#   docker compose up -d
+#
+# Without COMPOSE_FILE, pass both files to every command:
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d
+
+services:
+  middleware:
+    environment:
+      DEMO_INSPECT: "true"
+
+  setup-vault:
+    environment:
+      DEMO_INSPECT: "true"
+
+  reference-app:
+    environment:
+      DEMO_PASSWORD_FILE: /run/secrets/demo_password
+      REFERENCE_INSPECT_KEY_FILE: /run/secrets/reference_inspect_key
+    secrets: [demo_password, reference_inspect_key]
+
+secrets:
+  demo_password:
+    file: ${SECRETS_DIR:-./secrets}/demo-password
+  reference_inspect_key:
+    file: ${SECRETS_DIR:-./secrets}/reference-inspect-key

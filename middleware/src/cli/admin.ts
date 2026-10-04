@@ -6,7 +6,7 @@ import { PrismaDb } from '../prisma/prisma';
 // applications and credentials are kept so audit rows always resolve.
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const OPERATIONS: readonly Operation[] = ['TOKENIZE', 'DETOKENIZE', 'ERASE'];
+const OPERATIONS: readonly Operation[] = ['TOKENIZE', 'DETOKENIZE', 'ERASE', 'INSPECT'];
 
 export class AdminError extends Error {}
 

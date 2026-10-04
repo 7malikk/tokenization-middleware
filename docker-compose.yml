@@ -12,6 +12,9 @@
 # Services build their database URL from the secret at startup, so no
 # password appears in this file, in env files, in images or in logs.
 #
+# The demonstration UI is off. To switch it on, add docker-compose.demo.yml
+# (see that file).
+#
 # Database ports are not published. For debugging or running the test suites
 # against these databases, add docker-compose.db-ports.yml.
 
@@ -99,6 +102,8 @@ services:
       MASTER_KEK_FILE: /run/secrets/master_kek
       MASTER_KEY_FILE: /keys/master-keys.json
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-600}
+      # Demo inspect endpoint: off. docker-compose.demo.yml switches it on.
+      DEMO_INSPECT: "false"
       LOG_LEVEL: ${LOG_LEVEL:-info}
     secrets: [tls_cert, tls_key, master_kek, vault_db_password]
     volumes:

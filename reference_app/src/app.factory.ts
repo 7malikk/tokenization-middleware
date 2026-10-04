@@ -3,6 +3,8 @@ import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { AppModule } from './app.module';
 import { Env } from './config/env';
+import { basicAuthChecker, readDemoPassword, REALM } from './demo/basic-auth';
+import { demoEnabled } from './middleware/middleware-client';
 
 export const BODY_LIMIT_BYTES = 4096;
 
@@ -26,10 +28,53 @@ export async function createApp(env: Env, options: CreateAppOptions = {}): Promi
     },
   });
   acceptJsonOnly(adapter);
+  secureHeaders(adapter);
+  if (demoEnabled(env)) {
+    requireBasicAuth(adapter, readDemoPassword(env.DEMO_PASSWORD_FILE as string));
+  }
   return NestFactory.create<NestFastifyApplication>(AppModule.forRoot(env), adapter, {
     abortOnError: false,
     bodyParser: false,
     ...(options.nestLogger ? { logger: options.nestLogger } : {}),
+  });
+}
+
+// No inline script or style, nothing from other origins, no framing.
+const CSP = [
+  "default-src 'none'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "connect-src 'self'",
+  "img-src 'self'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join('; ');
+
+function secureHeaders(adapter: FastifyAdapter): void {
+  adapter.getInstance().addHook('onSend', async (_req, reply, payload) => {
+    reply.header('Content-Security-Policy', CSP);
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('Referrer-Policy', 'no-referrer');
+    reply.header('X-Frame-Options', 'DENY');
+    return payload;
+  });
+}
+
+/**
+ * Demo only: HTTP Basic auth on every route, unknown ones included, checked
+ * before routing. The password is compared in constant time.
+ */
+function requireBasicAuth(adapter: FastifyAdapter, password: string): void {
+  const check = basicAuthChecker(password);
+  adapter.getInstance().addHook('onRequest', async (req, reply) => {
+    if (!check(req.headers.authorization)) {
+      return reply
+        .code(401)
+        .header('WWW-Authenticate', REALM)
+        .header('Cache-Control', 'no-store')
+        .send({ statusCode: 401, message: 'authentication required' });
+    }
   });
 }
 
