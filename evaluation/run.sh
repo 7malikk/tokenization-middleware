@@ -284,6 +284,28 @@ for part in $PARTS; do
   SUMMARY="$SUMMARY$part: $result"$'\n'
 done
 
+# Last: the evaluator held the KEK and master keys, so prove that none of them,
+# nor any API key or password, reached the results folder.
+log "=== secret scan ==="
+SECRETS_ABS=$(cd "$SECRETS_DIR" && pwd)
+set +e
+compose run --rm --no-deps -T --user "$RUN_AS" -v "$RESULTS_ABS:/results" -v "$SECRETS_ABS:/scan-secrets:ro" \
+  evaluator /evaluation/tools/secret-scan.js /results /scan-secrets
+code=$?
+set -e
+case $code in
+  0) result=PASS ;;
+  3) result=FAIL ;;
+  *) result="ERROR (exit $code)" ;;
+esac
+[ "$code" = 0 ] || FAILED=1
+SUMMARY="${SUMMARY}secret scan: $result"$'\n'
+if [ "$FAILED" != 0 ]; then
+  SUMMARY="${SUMMARY}run: FAIL"$'\n'
+else
+  SUMMARY="${SUMMARY}run: PASS"$'\n'
+fi
+
 printf '%s' "$SUMMARY" >"$RESULTS_ABS/result.txt"
 log "=== results in $RESULTS ==="
 printf '%s' "$SUMMARY" >&2

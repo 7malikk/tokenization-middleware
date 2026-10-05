@@ -59,7 +59,8 @@ nohup evaluation/run.sh all > evaluation.log 2>&1 &
 
 Each command exits 0 when every check passes. At the end it prints one line per
 part (`DONE` for latency, `PASS`/`FAIL` for the others, `ERROR` if a step could
-not run) and writes the same lines to `result.txt`.
+not run), then the secret scan and the overall `run: PASS` or `run: FAIL`, and
+writes the same lines to `result.txt`.
 
 To copy the results to your machine:
 
@@ -75,8 +76,23 @@ scp -r <user>@<server>:<repository>/evaluation/results/<timestamp> .
    measurements, then starts `baseline-db` and `evaluation-app`.
 3. Records the environment to `environment.json` (see below).
 4. Runs the part, writing to `evaluation/results/<UTC timestamp>/<part>/`.
-5. On exit, even after an error or Ctrl-C, removes the evaluation containers
+5. Runs the **secret scan** (below). A finding marks the whole run FAIL.
+6. On exit, even after an error or Ctrl-C, removes the evaluation containers
    and puts the middleware back on the rate limit it had before.
+
+### Secret scan
+
+The evaluator container holds the KEK and unwraps the master keys, so every
+run ends by proving none of that reached the results. `tools/secret-scan.js`
+searches every file in the run's results folder, byte for byte, for the KEK,
+every master key version, every API key (whole, and without its `tkm_`
+prefix), every password in `secrets/` (the database passwords and the demo
+password) and the TLS private key. Each is searched for as stored, as hex in
+both cases, base64, base64url, URL-encoded, and as raw bytes for binary keys.
+It writes `secret-scan.json`, naming only the secret, the encoding and the
+file, never the value, and adds `secret scan: PASS` or `FAIL` to `result.txt`,
+followed by the overall `run: PASS` or `run: FAIL`. The scan runs even when a
+part failed.
 
 `evaluation/results/` is gitignored.
 
@@ -98,7 +114,7 @@ All behind the `evaluation` profile, none started by a plain `docker compose up`
 | --- | --- | --- |
 | `baseline-db` | `baseline-net` | The latency baseline's own PostgreSQL (same image and storage type as `reference-db`) |
 | `baseline-migrate` | `baseline-net` | Applies `reference_app/prisma/baseline/` migrations to it |
-| `evaluation-app` | `app-net`, `baseline-net` | The reference app with `EVALUATION_BASELINE=true`, on `127.0.0.1:8081` (`EVALUATION_APP_PORT`) |
+| `evaluation-app` | `app-net`, `baseline-net` | The reference app with `EVALUATION_BASELINE=true`, on `127.0.0.1:8081` (`EVALUATION_APP_PORT`). The bind address is fixed to 127.0.0.1, with no override, so it is never reachable from outside the host. Do not point a reverse proxy (Caddy) at it |
 | `scratch-db` | `scratch-net` | Throwaway PostgreSQL in memory, for restoring vault backups |
 | `evaluator` | `vault-net`, `app-net`, `scratch-net` | Runs `evaluation/tools/*.js` with the middleware's own compiled crypto, key file and Prisma code |
 | `k6` | host | The load generator, `grafana/k6:1.3.0` |
@@ -299,5 +315,6 @@ evaluation/tools/            Node scripts run in the evaluator container
   segregation.js             create customers; analyse the reference-db dump
   irreversibility.js         the six steps and the report
   breach.js                  the scenarios and the report
+  secret-scan.js             the final check: no secret anywhere in the results
 evaluation/results/          one folder per run (gitignored)
 ```
