@@ -18,6 +18,7 @@ run them together:
 ```
 middleware/               the tokenization middleware (its own package.json)
 reference_app/            the reference application (its own package.json)
+evaluation/               the chapter 5 evaluation (see evaluation/README.md)
 docker-compose.yml        full stack; run docker compose from the repository root
 ```
 
@@ -219,6 +220,11 @@ Services:
 | `reference-app` | `app-net` | The reference application |
 | `setup` | none | Step 1: writes the secret files (profile `setup`, run on demand) |
 | `setup-vault` | `vault-net` | Step 2 and key rotation (profile `setup`, run on demand) |
+
+The evaluation adds `baseline-db`, `baseline-migrate`, `evaluation-app`,
+`scratch-db`, `evaluator` and `k6`, all behind the Compose profile
+`evaluation`, so a plain `docker compose up` never starts them. See
+[Evaluation](#evaluation).
 
 `vault-net` is internal (no outside connectivity), and the reference app is
 not on it, so it has no network path to `vault-db`. This relies on the Docker
@@ -471,6 +477,16 @@ and authenticates with its own API key.
 After erasure, reveal returns 404. Any middleware failure becomes one fixed
 502. If saving a customer fails after tokenizing, the new token is erased.
 
+With `EVALUATION_BASELINE=true` (evaluation only, off by default) it also
+serves the latency baseline, `POST /baseline/customers` and
+`POST /baseline/customers/:id/read`, which store and read a BVN directly in a
+separate baseline database (`BASELINE_DATABASE_URL`, or
+`BASELINE_DATABASE_PASSWORD_FILE` with `BASELINE_DATABASE_HOST`, `_NAME`,
+`_USER` and `_SCHEMA`) through its own Prisma schema in `prisma/baseline/`,
+with no middleware. The app refuses to start if that database is the reference
+database. These routes are the system the evaluation measures the middleware
+against; never use them with real data.
+
 With the demo on (`DEMO_PASSWORD_FILE` set, plus `REFERENCE_INSPECT_KEY` or
 `REFERENCE_INSPECT_KEY_FILE`), it also serves the demonstration page at `/`,
 `GET /customers` (the customer list) and `GET /demo/vault` (the middleware's
@@ -496,8 +512,24 @@ Its tests run against a local database and a fake HTTPS middleware:
 
 ```sh
 npm test            # unit tests
-npm run test:int    # needs PostgreSQL at TEST_DATABASE_URL (name ending in _test)
+npm run test:int    # needs PostgreSQL at TEST_DATABASE_URL and BASELINE_TEST_DATABASE_URL (names ending in _test)
 ```
+
+## Evaluation
+
+`evaluation/` holds the scripts that produce the evidence for thesis chapter 5:
+latency (NFR1), segregation (NFR2), irreversibility (NFR6) and breach
+resilience (NFR3). Each part runs with one command and needs only Docker on
+the host:
+
+```sh
+evaluation/run.sh setup     # once
+evaluation/run.sh latency   # also: segregation, irreversibility, breach, all, smoke
+```
+
+Results go to `evaluation/results/<timestamp>/` (gitignored). See
+`evaluation/README.md` for the method, the order of commands on the server,
+and every output file.
 
 ## API
 
@@ -582,6 +614,9 @@ middleware/test/integration/         schema, service, CLI, audit log and rotatio
 middleware/test/http/                HTTP tests (need PostgreSQL and openssl)
 reference_app/                       the reference application (own schema, database, tests)
 reference_app/public/                the demonstration page (HTML, CSS, JavaScript)
+reference_app/src/baseline/          evaluation-only latency baseline routes (EVALUATION_BASELINE=true)
+reference_app/prisma/baseline/       the baseline database's own schema and migrations
+evaluation/                          chapter 5 evaluation: run.sh, k6 scripts, tools
 ```
 
 ## Data and logging rules

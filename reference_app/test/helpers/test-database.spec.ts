@@ -1,4 +1,4 @@
-import { resolveTestDatabaseUrl } from './test-database';
+import { resolveBaselineTestDatabaseUrl, resolveTestDatabaseUrl } from './test-database';
 
 describe('resolveTestDatabaseUrl', () => {
   const base = 'postgresql://u@localhost:5432';
@@ -21,5 +21,19 @@ describe('resolveTestDatabaseUrl', () => {
     expect(() => resolveTestDatabaseUrl({})).toThrow('not set');
     const url = `${base}/vault_test`;
     expect(() => resolveTestDatabaseUrl({ TEST_DATABASE_URL: url, DATABASE_URL: url })).toThrow('must differ');
+  });
+});
+
+describe('resolveBaselineTestDatabaseUrl', () => {
+  const base = 'postgresql://u@localhost:5432';
+
+  it('applies the same rules against the reference test database', () => {
+    const url = `${base}/baseline_test`;
+    expect(resolveBaselineTestDatabaseUrl({ BASELINE_TEST_DATABASE_URL: url, TEST_DATABASE_URL: `${base}/reference_test` })).toBe(url);
+    expect(() => resolveBaselineTestDatabaseUrl({})).toThrow('not set');
+    expect(() => resolveBaselineTestDatabaseUrl({ BASELINE_TEST_DATABASE_URL: `${base}/baseline` })).toThrow('_test');
+    expect(() => resolveBaselineTestDatabaseUrl({ BASELINE_TEST_DATABASE_URL: url, TEST_DATABASE_URL: url })).toThrow(
+      'must differ',
+    );
   });
 });

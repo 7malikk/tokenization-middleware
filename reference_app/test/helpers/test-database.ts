@@ -23,3 +23,15 @@ export function resolveTestDatabaseUrl(env: Readonly<Record<string, string | und
   }
   return testUrl;
 }
+
+/**
+ * Resolve the baseline database the evaluation tests use (BASELINE_TEST_DATABASE_URL).
+ * Same rules: the name must end in "_test", and it must differ from the
+ * reference test database.
+ */
+export function resolveBaselineTestDatabaseUrl(env: Readonly<Record<string, string | undefined>>): string {
+  if (!env.BASELINE_TEST_DATABASE_URL) {
+    throw new Error('BASELINE_TEST_DATABASE_URL is not set. See .env.example.');
+  }
+  return resolveTestDatabaseUrl({ TEST_DATABASE_URL: env.BASELINE_TEST_DATABASE_URL, DATABASE_URL: env.TEST_DATABASE_URL });
+}

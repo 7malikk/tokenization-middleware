@@ -2,7 +2,8 @@
 
 # Reference application. Targets:
 #   runtime  the server: production dependencies and the built app only
-#   migrate  one-shot `prisma migrate deploy` for the reference database
+#   migrate  one-shot `prisma migrate deploy` for the reference database (and,
+#            for the evaluation only, the baseline database)
 
 FROM node:22-slim AS base
 RUN apt-get update \
@@ -14,7 +15,8 @@ FROM base AS build
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY prisma ./prisma
-RUN npx prisma generate
+# The baseline client is for the evaluation only (prisma/baseline/schema.prisma).
+RUN npx prisma generate && npx prisma generate --schema prisma/baseline/schema.prisma
 COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
 RUN npm run build

@@ -17,6 +17,10 @@
 #
 # Database ports are not published. For debugging or running the test suites
 # against these databases, add docker-compose.db-ports.yml.
+#
+# The evaluation services (thesis chapter 5) sit behind the `evaluation`
+# profile and never start with a plain `docker compose up`. They are driven
+# by evaluation/run.sh (see evaluation/README.md).
 
 name: tokenization
 
@@ -187,14 +191,184 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # Evaluation only (profile `evaluation`). Off by default. Driven by
+  # evaluation/run.sh; see evaluation/README.md.
+  # ---------------------------------------------------------------------------
+
+  # The latency baseline's own database: BVNs stored directly, no middleware.
+  # Same image and storage type as reference-db, and never connected to it.
+  baseline-db:
+    image: postgres:16-alpine
+    profiles: [evaluation]
+    environment:
+      POSTGRES_USER: baseline
+      POSTGRES_PASSWORD_FILE: /run/secrets/baseline_db_password
+      POSTGRES_DB: baseline
+    secrets: [baseline_db_password]
+    volumes:
+      - baseline-pgdata:/var/lib/postgresql/data
+    networks: [baseline-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    restart: "no"
+
+  baseline-migrate:
+    build: { context: ./reference_app, target: migrate }
+    pull_policy: build
+    image: tokenization-reference-migrate:latest
+    profiles: [evaluation]
+    # The baseline schema reads BASELINE_DATABASE_URL, never DATABASE_URL.
+    command:
+      - node
+      - dist/config/database-url.js
+      - sh
+      - -c
+      - BASELINE_DATABASE_URL="$$DATABASE_URL" exec npx prisma migrate deploy --schema prisma/baseline/schema.prisma
+    environment:
+      DATABASE_HOST: baseline-db
+      DATABASE_NAME: baseline
+      DATABASE_USER: baseline
+      DATABASE_SCHEMA: public
+      DATABASE_PASSWORD_FILE: /run/secrets/baseline_db_password
+    secrets: [baseline_db_password]
+    networks: [baseline-net]
+    depends_on:
+      baseline-db: { condition: service_healthy }
+    restart: "no"
+
+  # The reference app with the baseline routes switched on. It serves both the
+  # baseline (/baseline/customers) and the treatment (/customers) from one
+  # process, against reference-db and baseline-db respectively.
+  evaluation-app:
+    build: { context: ./reference_app, target: runtime }
+    pull_policy: build
+    image: tokenization-reference-app:latest
+    profiles: [evaluation]
+    environment:
+      <<: *reference-database
+      PORT: "8080"
+      MIDDLEWARE_URL: https://middleware:3000
+      MIDDLEWARE_CA_PATH: /run/secrets/tls_cert
+      REFERENCE_API_KEY_FILE: /run/secrets/reference_api_key
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      EVALUATION_BASELINE: "true"
+      BASELINE_DATABASE_HOST: baseline-db
+      BASELINE_DATABASE_NAME: baseline
+      BASELINE_DATABASE_USER: baseline
+      BASELINE_DATABASE_SCHEMA: public
+      BASELINE_DATABASE_PASSWORD_FILE: /run/secrets/baseline_db_password
+    secrets: [tls_cert, reference_api_key, reference_db_password, baseline_db_password]
+    ports:
+      - "127.0.0.1:${EVALUATION_APP_PORT:-8081}:8080"
+    networks: [app-net, baseline-net]
+    depends_on:
+      reference-db: { condition: service_healthy }
+      reference-migrate: { condition: service_completed_successfully }
+      baseline-db: { condition: service_healthy }
+      baseline-migrate: { condition: service_completed_successfully }
+      middleware: { condition: service_healthy }
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(8080,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    restart: "no"
+
+  # Throwaway database for restoring vault backups (irreversibility step 6,
+  # breach scenario 5). In memory only, on its own internal network.
+  scratch-db:
+    image: postgres:16-alpine
+    profiles: [evaluation]
+    environment:
+      POSTGRES_USER: scratch
+      POSTGRES_PASSWORD_FILE: /run/secrets/scratch_db_password
+      POSTGRES_DB: scratch
+    secrets: [scratch_db_password]
+    tmpfs:
+      - /var/lib/postgresql/data
+    networks: [scratch-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    restart: "no"
+
+  # Runs evaluation/tools/*.js with the middleware's own compiled code and
+  # Prisma client (the migrate image carries both). Reads databases only
+  # through Prisma. Run on demand: docker compose run --rm evaluator <script>.
+  evaluator:
+    build: { context: ./middleware, target: migrate }
+    pull_policy: build
+    image: tokenization-middleware-migrate:latest
+    profiles: [evaluation]
+    entrypoint: ["node"]
+    environment:
+      NODE_PATH: /app/node_modules
+      VAULT_DATABASE_HOST: vault-db
+      VAULT_DATABASE_NAME: vault
+      VAULT_DATABASE_USER: vault
+      VAULT_DATABASE_SCHEMA: vault
+      VAULT_DATABASE_PASSWORD_FILE: /run/secrets/vault_db_password
+      SCRATCH_DATABASE_HOST: scratch-db
+      SCRATCH_DATABASE_NAME: scratch
+      SCRATCH_DATABASE_USER: scratch
+      SCRATCH_DATABASE_SCHEMA: vault
+      SCRATCH_DATABASE_PASSWORD_FILE: /run/secrets/scratch_db_password
+      MIDDLEWARE_URL: https://middleware:3000
+      MIDDLEWARE_CA_PATH: /run/secrets/tls_cert
+      EVALUATION_APP_URL: http://evaluation-app:8080
+      EVALUATION_CREDENTIALS_FILE: /run/secrets/evaluation_credentials
+      MASTER_KEY_FILE: /keys/master-keys.json
+      MASTER_KEK_FILE: /run/secrets/master_kek
+    secrets: [tls_cert, master_kek, vault_db_password, scratch_db_password, evaluation_credentials]
+    volumes:
+      - ./evaluation/tools:/evaluation/tools:ro
+      - ${KEYS_DIR:-./keys}:/keys:ro
+    networks: [vault-net, app-net, scratch-net]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: "no"
+
+  # Load generator. Host networking, so it reaches the published ports on
+  # 127.0.0.1 exactly as a client on the server would. It trusts only the
+  # middleware certificate (SSL_CERT_FILE replaces the system CAs).
+  k6:
+    image: grafana/k6:1.3.0
+    profiles: [evaluation]
+    network_mode: host
+    environment:
+      SSL_CERT_FILE: /run/secrets/tls_cert
+      MIDDLEWARE_URL: https://localhost:${MIDDLEWARE_PORT:-3000}
+      APP_URL: http://127.0.0.1:${EVALUATION_APP_PORT:-8081}
+      EVALUATION_CREDENTIALS_FILE: /run/secrets/evaluation_credentials
+    secrets: [tls_cert, evaluation_credentials]
+    volumes:
+      - ./evaluation/k6:/scripts:ro
+    restart: "no"
+
 networks:
   vault-net:
     internal: true
   app-net: {}
+  # Evaluation only.
+  baseline-net:
+    internal: true
+  scratch-net:
+    internal: true
 
 volumes:
   vault-pgdata:
   reference-pgdata:
+  baseline-pgdata: # evaluation only
 
 secrets:
   tls_cert:
@@ -209,3 +383,10 @@ secrets:
     file: ${SECRETS_DIR:-./secrets}/vault-db-password
   reference_db_password:
     file: ${SECRETS_DIR:-./secrets}/reference-db-password
+  # Evaluation only (created by evaluation/run.sh setup).
+  baseline_db_password:
+    file: ${SECRETS_DIR:-./secrets}/baseline-db-password
+  scratch_db_password:
+    file: ${SECRETS_DIR:-./secrets}/scratch-db-password
+  evaluation_credentials:
+    file: ${SECRETS_DIR:-./secrets}/evaluation-credentials.json

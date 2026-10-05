@@ -1,4 +1,6 @@
 import { DynamicModule, Module } from '@nestjs/common';
+import { evaluationEnabled } from './baseline/baseline-database';
+import { BaselineModule } from './baseline/baseline.module';
 import { Env, EnvModule } from './config/env';
 import { CustomersModule } from './customers/customers.module';
 import { DemoModule } from './demo/demo.module';
@@ -16,6 +18,8 @@ export class AppModule {
         CustomersModule,
         // Demo only, off by default: the page and its views exist only when switched on.
         ...(demoEnabled(env) ? [DemoModule] : []),
+        // Evaluation only, off by default: the latency baseline routes.
+        ...(evaluationEnabled(env) ? [BaselineModule] : []),
       ],
     };
   }

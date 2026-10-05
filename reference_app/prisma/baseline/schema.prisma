@@ -1,0 +1,24 @@
+// EVALUATION ONLY. The latency baseline (thesis 3.1.3): a BVN stored directly,
+// with no middleware, in its own database. Never the reference database.
+//
+// The URL comes from BASELINE_DATABASE_URL, never DATABASE_URL, so the Prisma
+// CLI cannot apply this schema to the reference database by mistake.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../node_modules/.prisma/baseline-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("BASELINE_DATABASE_URL")
+}
+
+model BaselineCustomer {
+  id       String @id @default(uuid()) @db.Uuid
+  fullName String @map("full_name")
+  // Plaintext on purpose: this is the system without tokenization.
+  bvn      String @db.Char(11)
+
+  @@map("baseline_customer")
+}
